@@ -166,20 +166,35 @@ fn parse_address_from_data(data: &[u8], offset: usize) -> Option<String> {
 }
 
 /// Parses a uint256 from ABI-encoded data at the given offset
+/// Returns the value as a decimal string for TheGraph BigInt compatibility
 fn parse_uint256_from_data(data: &[u8], offset: usize) -> String {
     if data.len() < offset + 32 {
         return "0".to_string();
     }
     let bytes = &data[offset..offset + 32];
-    // Convert to decimal string, handling large numbers
-    let hex_str = hex::encode(bytes);
-    // Remove leading zeros and convert
-    let trimmed = hex_str.trim_start_matches('0');
-    if trimmed.is_empty() {
+    
+    // Convert bytes to decimal string using big-endian interpretation
+    // We process the bytes manually to handle arbitrarily large numbers
+    let mut result = Vec::new();
+    
+    for &byte in bytes.iter() {
+        // Multiply result by 256 and add the new byte
+        let mut carry = byte as u32;
+        for digit in result.iter_mut().rev() {
+            let val = (*digit as u32) * 256 + carry;
+            *digit = (val % 10) as u8;
+            carry = val / 10;
+        }
+        while carry > 0 {
+            result.insert(0, (carry % 10) as u8);
+            carry /= 10;
+        }
+    }
+    
+    if result.is_empty() {
         "0".to_string()
     } else {
-        // For simplicity, return as hex - the consumer can convert
-        format!("0x{}", hex_str)
+        result.iter().map(|d| (b'0' + d) as char).collect()
     }
 }
 
@@ -252,16 +267,14 @@ mod tests {
 
     #[test]
     fn test_parse_uint256_from_data() {
-        // Test parsing 1000000 (0xF4240 = 1000000 in decimal)
+        // Test parsing 1000000 (0x0F4240 = 1000000 in decimal)
         let mut data = vec![0u8; 32];
         data[29] = 0x0F;
         data[30] = 0x42;
         data[31] = 0x40;
         
         let amount = parse_uint256_from_data(&data, 0);
-        assert!(amount.starts_with("0x"));
-        // Should contain the hex value
-        assert!(amount.contains("f4240") || amount.contains("F4240") || amount.to_lowercase().contains("0f4240"));
+        assert_eq!(amount, "1000000");
     }
 
     #[test]
@@ -334,9 +347,9 @@ mod tests {
         assert!(fee_address.is_some());
         assert!(fee_address.unwrap().starts_with('T'));
         
-        // Amounts should be non-zero hex values
-        assert!(amount.starts_with("0x"));
-        assert!(fee_amount.starts_with("0x"));
+        // Amounts should be decimal strings
+        assert_eq!(amount, "1000000");
+        assert_eq!(fee_amount, "1000");
     }
 
     #[test]

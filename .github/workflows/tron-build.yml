@@ -149,29 +149,21 @@ jobs:
           
           # Run substreams and capture JSON output
           # This tests the full pipeline: load WASM, connect to endpoint, process blocks, parse events
-          set +e
-          substreams run "$SPKG_FILE" map_erc20_fee_proxy_payments \
+          # Note: substreams run exits with 0 on success, non-zero on failure
+          if ! substreams run "$SPKG_FILE" map_erc20_fee_proxy_payments \
             -e tron.substreams.pinax.network:443 \
             --start-block 63208782 \
             --stop-block +100 \
-            -o json 2>&1 | tee output.log
-          EXIT_CODE=$?
-          set -e
-          
-          echo ""
-          echo "=== Validating Results ==="
-          
-          # Check for fatal errors
-          if grep -qi "fatal\|panic\|failed to" output.log; then
-            echo "❌ FAILED: Substreams encountered errors"
+            -o json 2>&1 | tee output.log; then
+            echo ""
+            echo "❌ FAILED: Substreams command returned non-zero exit code"
+            echo "Output:"
             cat output.log
             exit 1
           fi
           
-          # Check that the module was loaded and executed
-          if grep -qi "module" output.log || grep -qi "block" output.log; then
-            echo "✅ Substreams module loaded and executed"
-          fi
+          echo ""
+          echo "=== Validating Results ==="
           
           # If any payments were found, validate the structure
           if grep -q '"payments"' output.log; then

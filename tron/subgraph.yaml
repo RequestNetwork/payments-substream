@@ -16,7 +16,7 @@ dataSources:
     source:
       package:
         moduleName: map_erc20_fee_proxy_payments
-        file: ./request-network-tron-v0.1.0.spkg
+        file: ./request_network_tron-v0.1.0.spkg
     mapping:
       apiVersion: 0.0.7
       kind: substreams/graph-entities

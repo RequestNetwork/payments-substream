@@ -20,6 +20,19 @@ on:
         required: false
         default: false
         type: boolean
+      deploy_subgraph:
+        description: 'Deploy subgraph to The Graph Studio'
+        required: false
+        default: false
+        type: boolean
+      deploy_network:
+        description: 'Network to deploy (nile or mainnet)'
+        required: false
+        default: 'nile'
+        type: choice
+        options:
+          - nile
+          - mainnet
 
 jobs:
   build-and-test:
@@ -127,3 +140,90 @@ jobs:
           
           echo "Integration test completed successfully"
           cat output.json
+
+  deploy-subgraph:
+    name: Deploy Subgraph to The Graph Studio
+    runs-on: ubuntu-latest
+    needs: build-and-test
+    # Only run on manual trigger with deploy enabled
+    if: ${{ github.event.inputs.deploy_subgraph == 'true' }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Cache Cargo dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            tron/target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('tron/Cargo.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install Substreams CLI
+        run: |
+          curl -sSL https://github.com/streamingfast/substreams/releases/latest/download/substreams_linux_x86_64.tar.gz | tar xz
+          sudo mv substreams /usr/local/bin/
+
+      - name: Install Graph CLI
+        run: npm install -g @graphprotocol/graph-cli
+
+      - name: Build WASM module
+        working-directory: tron
+        run: make build
+
+      - name: Package Substreams
+        working-directory: tron
+        run: make package
+
+      - name: Verify package created
+        working-directory: tron
+        run: |
+          if [ ! -f "request-network-tron-v0.1.0.spkg" ]; then
+            # Try to find any .spkg file
+            SPKG_FILE=$(ls -1 *.spkg 2>/dev/null | head -1)
+            if [ -z "$SPKG_FILE" ]; then
+              echo "ERROR: No .spkg package file found!"
+              exit 1
+            fi
+          fi
+          echo "Package created successfully"
+          ls -la *.spkg
+
+      - name: Authenticate with The Graph Studio
+        run: graph auth --studio ${{ secrets.GRAPH_STUDIO_DEPLOY_KEY }}
+
+      - name: Deploy to The Graph Studio
+        working-directory: tron
+        run: |
+          NETWORK="${{ github.event.inputs.deploy_network }}"
+          
+          if [ "$NETWORK" = "nile" ]; then
+            SUBGRAPH_SLUG="request-payments-tron-nile"
+          else
+            SUBGRAPH_SLUG="request-payments-tron"
+          fi
+          
+          echo "Deploying to subgraph: $SUBGRAPH_SLUG"
+          
+          # Deploy with version from Cargo.toml
+          VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
+          
+          graph deploy --studio "$SUBGRAPH_SLUG" --version-label "v$VERSION"
+          
+          echo "Deployed successfully to https://api.studio.thegraph.com/query/67444/$SUBGRAPH_SLUG/version/latest"

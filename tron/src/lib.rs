@@ -220,4 +220,136 @@ mod tests {
         let encoded = base58_encode(&hex_addr);
         assert!(encoded.starts_with('T'));
     }
+
+    #[test]
+    fn test_base58_encode_20_bytes() {
+        // Test with 20 bytes (without prefix) - should add 0x41 prefix
+        let addr_bytes = hex::decode("a614f803b6fd780986a42c78ec9c7f77e6ded13c").unwrap();
+        let encoded = base58_encode(&addr_bytes);
+        assert!(encoded.starts_with('T'));
+        assert_eq!(encoded.len(), 34); // TRON addresses are 34 chars
+    }
+
+    #[test]
+    fn test_parse_proxy_addresses() {
+        let params = "mainnet_proxy_address=TCUDPYnS9dH3WvFEaE7wN7vnDa51J4R4fd\nnile_proxy_address=THK5rNmrvCujhmrXa5DB1dASepwXTr9cJs";
+        let (mainnet, nile) = parse_proxy_addresses(params);
+        assert_eq!(mainnet, "TCUDPYnS9dH3WvFEaE7wN7vnDa51J4R4fd");
+        assert_eq!(nile, "THK5rNmrvCujhmrXa5DB1dASepwXTr9cJs");
+    }
+
+    #[test]
+    fn test_parse_address_from_data() {
+        // ABI-encoded address: 32 bytes with address in last 20 bytes
+        // Address: 0xa614f803b6fd780986a42c78ec9c7f77e6ded13c
+        let mut data = vec![0u8; 12]; // 12 bytes padding
+        data.extend_from_slice(&hex::decode("a614f803b6fd780986a42c78ec9c7f77e6ded13c").unwrap());
+        
+        let address = parse_address_from_data(&data, 0);
+        assert!(address.is_some());
+        assert!(address.unwrap().starts_with('T'));
+    }
+
+    #[test]
+    fn test_parse_uint256_from_data() {
+        // Test parsing 1000000 (0xF4240 = 1000000 in decimal)
+        let mut data = vec![0u8; 32];
+        data[29] = 0x0F;
+        data[30] = 0x42;
+        data[31] = 0x40;
+        
+        let amount = parse_uint256_from_data(&data, 0);
+        assert!(amount.starts_with("0x"));
+        // Should contain the hex value
+        assert!(amount.contains("f4240") || amount.contains("F4240") || amount.to_lowercase().contains("0f4240"));
+    }
+
+    #[test]
+    fn test_parse_uint256_zero() {
+        let data = vec![0u8; 32];
+        let amount = parse_uint256_from_data(&data, 0);
+        assert_eq!(amount, "0");
+    }
+
+    #[test]
+    fn test_event_signature() {
+        // Verify the event signature hash is correct
+        // keccak256("TransferWithReferenceAndFee(address,address,uint256,bytes,uint256,address)")
+        assert_eq!(
+            TRANSFER_WITH_REF_AND_FEE_TOPIC,
+            "9f16cbcc523c67a60c450e5ffe4f3b7b6dbe772e7abcadb2686ce029a9a0a2b6"
+        );
+    }
+
+    #[test]
+    fn test_parse_full_event_data() {
+        // Simulate a full TransferWithReferenceAndFee event data
+        // Data layout (160 bytes total):
+        // [0-31]   = tokenAddress (padded)
+        // [32-63]  = to (padded)  
+        // [64-95]  = amount
+        // [96-127] = feeAmount
+        // [128-159] = feeAddress (padded)
+        
+        let mut data = Vec::new();
+        
+        // Token address (padded to 32 bytes)
+        data.extend_from_slice(&[0u8; 12]);
+        data.extend_from_slice(&hex::decode("a614f803b6fd780986a42c78ec9c7f77e6ded13c").unwrap());
+        
+        // To address (padded to 32 bytes)
+        data.extend_from_slice(&[0u8; 12]);
+        data.extend_from_slice(&hex::decode("b614f803b6fd780986a42c78ec9c7f77e6ded13d").unwrap());
+        
+        // Amount: 1000000 (0x0F4240)
+        let mut amount_bytes = vec![0u8; 32];
+        amount_bytes[29] = 0x0F;
+        amount_bytes[30] = 0x42;
+        amount_bytes[31] = 0x40;
+        data.extend_from_slice(&amount_bytes);
+        
+        // Fee amount: 1000 (0x3E8)
+        let mut fee_bytes = vec![0u8; 32];
+        fee_bytes[30] = 0x03;
+        fee_bytes[31] = 0xE8;
+        data.extend_from_slice(&fee_bytes);
+        
+        // Fee address (padded to 32 bytes)
+        data.extend_from_slice(&[0u8; 12]);
+        data.extend_from_slice(&hex::decode("c614f803b6fd780986a42c78ec9c7f77e6ded13e").unwrap());
+        
+        assert_eq!(data.len(), 160);
+        
+        // Parse each field
+        let token = parse_address_from_data(&data, 0);
+        let to = parse_address_from_data(&data, 32);
+        let amount = parse_uint256_from_data(&data, 64);
+        let fee_amount = parse_uint256_from_data(&data, 96);
+        let fee_address = parse_address_from_data(&data, 128);
+        
+        assert!(token.is_some());
+        assert!(to.is_some());
+        assert!(token.unwrap().starts_with('T'));
+        assert!(to.unwrap().starts_with('T'));
+        assert!(fee_address.is_some());
+        assert!(fee_address.unwrap().starts_with('T'));
+        
+        // Amounts should be non-zero hex values
+        assert!(amount.starts_with("0x"));
+        assert!(fee_amount.starts_with("0x"));
+    }
+
+    #[test]
+    fn test_data_too_short() {
+        // Test with data shorter than expected
+        let data = vec![0u8; 100]; // Less than 160 bytes
+        
+        // Should still parse what's available
+        let token = parse_address_from_data(&data, 0);
+        assert!(token.is_some());
+        
+        // But fee_address at offset 128 should fail
+        let fee_address = parse_address_from_data(&data, 128);
+        assert!(fee_address.is_none());
+    }
 }

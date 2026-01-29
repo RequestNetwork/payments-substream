@@ -13,6 +13,8 @@ on:
     paths:
       - 'tron/**'
       - '.github/workflows/tron-build.yml'
+  release:
+    types: [published]
   workflow_dispatch:
     inputs:
       run_integration_tests:
@@ -20,17 +22,13 @@ on:
         required: false
         default: false
         type: boolean
-      deploy_subgraph:
-        description: 'Deploy subgraph to The Graph Studio'
-        required: false
-        default: false
-        type: boolean
       deploy_network:
-        description: 'Network to deploy (nile or mainnet)'
+        description: 'Deploy to network (none, nile, or mainnet)'
         required: false
-        default: 'nile'
+        default: 'none'
         type: choice
         options:
+          - none
           - nile
           - mainnet
 
@@ -83,8 +81,11 @@ jobs:
     name: Integration Test (Live Endpoint)
     runs-on: ubuntu-latest
     needs: build-and-test
-    # Only run on manual trigger with integration tests enabled, or on main branch push
-    if: ${{ github.event.inputs.run_integration_tests == 'true' || (github.event_name == 'push' && github.ref == 'refs/heads/main') }}
+    # Run on: manual trigger with flag, push to main, or release
+    if: |
+      github.event.inputs.run_integration_tests == 'true' ||
+      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+      github.event_name == 'release'
 
     steps:
       - name: Checkout repository
@@ -141,12 +142,14 @@ jobs:
           echo "Integration test completed successfully"
           cat output.json
 
-  deploy-subgraph:
-    name: Deploy Subgraph to The Graph Studio
+  deploy-testnet:
+    name: Deploy to Nile Testnet
     runs-on: ubuntu-latest
-    needs: build-and-test
-    # Only run on manual trigger with deploy enabled
-    if: ${{ github.event.inputs.deploy_subgraph == 'true' }}
+    needs: [build-and-test, integration-test]
+    # Deploy to testnet on: push to main, or manual with nile selected
+    if: |
+      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+      github.event.inputs.deploy_network == 'nile'
 
     steps:
       - name: Checkout repository
@@ -194,36 +197,112 @@ jobs:
       - name: Verify package created
         working-directory: tron
         run: |
-          if [ ! -f "request-network-tron-v0.1.0.spkg" ]; then
-            # Try to find any .spkg file
-            SPKG_FILE=$(ls -1 *.spkg 2>/dev/null | head -1)
-            if [ -z "$SPKG_FILE" ]; then
-              echo "ERROR: No .spkg package file found!"
-              exit 1
-            fi
+          SPKG_FILE=$(ls -1 *.spkg 2>/dev/null | head -1)
+          if [ -z "$SPKG_FILE" ]; then
+            echo "ERROR: No .spkg package file found!"
+            exit 1
           fi
-          echo "Package created successfully"
-          ls -la *.spkg
+          echo "Package created successfully: $SPKG_FILE"
 
       - name: Authenticate with The Graph Studio
         run: graph auth --studio ${{ secrets.GRAPH_STUDIO_DEPLOY_KEY }}
 
-      - name: Deploy to The Graph Studio
+      - name: Deploy to Nile Testnet
         working-directory: tron
         run: |
-          NETWORK="${{ github.event.inputs.deploy_network }}"
+          VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
+          COMMIT_SHA="${{ github.sha }}"
+          SHORT_SHA="${COMMIT_SHA:0:7}"
           
-          if [ "$NETWORK" = "nile" ]; then
-            SUBGRAPH_SLUG="request-payments-tron-nile"
+          # Use commit SHA for testnet versions to track deployments
+          VERSION_LABEL="v${VERSION}-${SHORT_SHA}"
+          
+          echo "Deploying to request-payments-tron-nile with version: $VERSION_LABEL"
+          
+          graph deploy --studio request-payments-tron-nile --version-label "$VERSION_LABEL"
+          
+          echo "✅ Deployed to Nile testnet"
+          echo "Endpoint: https://api.studio.thegraph.com/query/67444/request-payments-tron-nile/version/latest"
+
+  deploy-mainnet:
+    name: Deploy to Mainnet
+    runs-on: ubuntu-latest
+    needs: [build-and-test]
+    # Deploy to mainnet on: GitHub release published, or manual with mainnet selected
+    if: |
+      github.event_name == 'release' ||
+      github.event.inputs.deploy_network == 'mainnet'
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Cache Cargo dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            tron/target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('tron/Cargo.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install Substreams CLI
+        run: |
+          curl -sSL https://github.com/streamingfast/substreams/releases/latest/download/substreams_linux_x86_64.tar.gz | tar xz
+          sudo mv substreams /usr/local/bin/
+
+      - name: Install Graph CLI
+        run: npm install -g @graphprotocol/graph-cli
+
+      - name: Build WASM module
+        working-directory: tron
+        run: make build
+
+      - name: Package Substreams
+        working-directory: tron
+        run: make package
+
+      - name: Verify package created
+        working-directory: tron
+        run: |
+          SPKG_FILE=$(ls -1 *.spkg 2>/dev/null | head -1)
+          if [ -z "$SPKG_FILE" ]; then
+            echo "ERROR: No .spkg package file found!"
+            exit 1
+          fi
+          echo "Package created successfully: $SPKG_FILE"
+
+      - name: Authenticate with The Graph Studio
+        run: graph auth --studio ${{ secrets.GRAPH_STUDIO_DEPLOY_KEY }}
+
+      - name: Deploy to Mainnet
+        working-directory: tron
+        run: |
+          # For releases, use the release tag as version
+          if [ "${{ github.event_name }}" = "release" ]; then
+            VERSION="${{ github.event.release.tag_name }}"
           else
-            SUBGRAPH_SLUG="request-payments-tron"
+            VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
+            VERSION="v${VERSION}"
           fi
           
-          echo "Deploying to subgraph: $SUBGRAPH_SLUG"
+          echo "Deploying to request-payments-tron with version: $VERSION"
           
-          # Deploy with version from Cargo.toml
-          VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
+          graph deploy --studio request-payments-tron --version-label "$VERSION"
           
-          graph deploy --studio "$SUBGRAPH_SLUG" --version-label "v$VERSION"
-          
-          echo "Deployed successfully to https://api.studio.thegraph.com/query/67444/$SUBGRAPH_SLUG/version/latest"
+          echo "✅ Deployed to Mainnet"
+          echo "Endpoint: https://api.studio.thegraph.com/query/67444/request-payments-tron/version/latest"

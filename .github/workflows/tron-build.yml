@@ -1,0 +1,129 @@
+name: Tron Substreams Build
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'tron/**'
+      - '.github/workflows/tron-build.yml'
+  push:
+    branches:
+      - main
+    paths:
+      - 'tron/**'
+      - '.github/workflows/tron-build.yml'
+  workflow_dispatch:
+    inputs:
+      run_integration_tests:
+        description: 'Run integration tests against live endpoint'
+        required: false
+        default: false
+        type: boolean
+
+jobs:
+  build-and-test:
+    name: Build and Test Tron Substreams
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-action@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Cache Cargo dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            tron/target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('tron/Cargo.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Build WASM module
+        working-directory: tron
+        run: make build
+
+      - name: Run unit tests
+        working-directory: tron
+        run: make test
+
+      - name: Verify build artifacts
+        working-directory: tron
+        run: |
+          echo "Checking build artifacts..."
+          if [ ! -f "target/wasm32-unknown-unknown/release/request_network_tron.wasm" ]; then
+            echo "ERROR: WASM file not found!"
+            exit 1
+          fi
+          echo "Build artifacts verified successfully"
+
+  integration-test:
+    name: Integration Test (Live Endpoint)
+    runs-on: ubuntu-latest
+    needs: build-and-test
+    # Only run on manual trigger with integration tests enabled, or on main branch push
+    if: ${{ github.event.inputs.run_integration_tests == 'true' || (github.event_name == 'push' && github.ref == 'refs/heads/main') }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-action@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Cache Cargo dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            tron/target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('tron/Cargo.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Install Substreams CLI
+        run: |
+          curl -sSL https://github.com/streamingfast/substreams/releases/latest/download/substreams_linux_x86_64.tar.gz | tar xz
+          sudo mv substreams /usr/local/bin/
+
+      - name: Build WASM module
+        working-directory: tron
+        run: make build
+
+      - name: Run integration test against Nile testnet
+        working-directory: tron
+        env:
+          SUBSTREAMS_API_TOKEN: ${{ secrets.SUBSTREAMS_API_TOKEN }}
+        run: |
+          echo "Running substreams against Nile testnet (blocks 63208782-63208792)..."
+          
+          # Run against a small range of blocks to verify the module works
+          substreams run ./substreams.yaml map_erc20_fee_proxy_payments \
+            -e tron.substreams.pinax.network:443 \
+            --start-block 63208782 \
+            --stop-block +10 \
+            --output json > output.json 2>&1 || true
+          
+          # Check that the run completed (even if no payments found)
+          if grep -q "error" output.json; then
+            echo "ERROR: Substreams run failed"
+            cat output.json
+            exit 1
+          fi
+          
+          echo "Integration test completed successfully"
+          cat output.json

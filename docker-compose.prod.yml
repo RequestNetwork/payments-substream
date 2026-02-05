@@ -6,7 +6,6 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.sink
-    container_name: tron-payments-sink
     restart: unless-stopped
     environment:
       # These variables are passed through from Easypanel's environment settings

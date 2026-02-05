@@ -1,0 +1,38 @@
+# Substreams SQL Sink for TRON Payments
+FROM golang:1.22-alpine AS builder
+
+# Install git for go get
+RUN apk add --no-cache git
+
+# Install substreams-sink-sql
+RUN go install github.com/streamingfast/substreams-sink-sql/cmd/substreams-sink-sql@latest
+
+# Final image
+FROM alpine:3.19
+
+# Install ca-certificates for HTTPS connections
+RUN apk add --no-cache ca-certificates
+
+# Copy the binary from builder
+COPY --from=builder /go/bin/substreams-sink-sql /usr/local/bin/
+
+# Copy the substreams package
+COPY tron/request-network-tron-v0.1.0.spkg /app/
+
+WORKDIR /app
+
+# Environment variables (override in Easypanel)
+ENV DSN=""
+ENV SUBSTREAMS_API_TOKEN=""
+ENV ENDPOINT="mainnet-evm.tron.streamingfast.io:443"
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+  CMD pgrep substreams-sink-sql || exit 1
+
+# Run the sink
+# The SUBSTREAMS_API_TOKEN env var is automatically picked up by the CLI
+CMD substreams-sink-sql from-proto "$DSN" \
+  /app/request-network-tron-v0.1.0.spkg \
+  map_erc20_fee_proxy_payments \
+  -e "$ENDPOINT"

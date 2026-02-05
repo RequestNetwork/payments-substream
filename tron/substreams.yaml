@@ -5,8 +5,8 @@ package:
   url: https://github.com/RequestNetwork/payments-substream
   doc: |
     Request Network TRON Substreams module for indexing ERC20FeeProxy payment events.
-    Indexes TransferWithReferenceAndFee events from the deployed ERC20FeeProxy contracts
-    on TRON mainnet and Nile testnet.
+    Indexes TransferWithReferenceAndFee events from the deployed ERC20FeeProxy contract
+    on TRON mainnet.
 
 imports:
   tron: https://spkg.io/streamingfast/tron-foundational-v0.1.2.spkg
@@ -25,7 +25,7 @@ binaries:
 modules:
   - name: map_erc20_fee_proxy_payments
     kind: map
-    initialBlock: 63208782 # Nile testnet deployment block (use lower for both networks)
+    initialBlock: 79216121 # TRON mainnet deployment block
     inputs:
       - params: string
       - source: sf.tron.type.v1.Block
@@ -38,11 +38,9 @@ modules:
 
       Params format:
         mainnet_proxy_address=<address>
-        nile_proxy_address=<address>
 
 network: tron
 
 params:
   map_erc20_fee_proxy_payments: |
     mainnet_proxy_address=TCUDPYnS9dH3WvFEaE7wN7vnDa51J4R4fd
-    nile_proxy_address=THK5rNmrvCujhmrXa5DB1dASepwXTr9cJs

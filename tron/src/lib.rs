@@ -1,7 +1,7 @@
 //! Request Network TRON Substreams Module
 //!
 //! This module indexes TransferWithReferenceAndFee events from the ERC20FeeProxy
-//! contract deployed on TRON mainnet and Nile testnet.
+//! contract deployed on TRON mainnet.
 
 mod pb;
 
@@ -17,30 +17,22 @@ use substreams::log;
 const TRANSFER_WITH_REF_AND_FEE_TOPIC: &str =
     "9f16cbcc523c67a60c450e5ffe4f3b7b6dbe772e7abcadb2686ce029a9a0a2b6";
 
-/// Parses proxy addresses from the params string
-/// Expected format: "mainnet_proxy_address=ADDR1\nnile_proxy_address=ADDR2"
-fn parse_proxy_addresses(params: &str) -> (String, String) {
-    let mut mainnet = String::new();
-    let mut nile = String::new();
-    
+/// Parses proxy address from the params string
+/// Expected format: "mainnet_proxy_address=ADDR"
+fn parse_proxy_address(params: &str) -> String {
     for line in params.lines() {
         let parts: Vec<&str> = line.splitn(2, '=').collect();
-        if parts.len() == 2 {
-            match parts[0].trim() {
-                "mainnet_proxy_address" => mainnet = parts[1].trim().to_string(),
-                "nile_proxy_address" => nile = parts[1].trim().to_string(),
-                _ => {}
-            }
+        if parts.len() == 2 && parts[0].trim() == "mainnet_proxy_address" {
+            return parts[1].trim().to_string();
         }
     }
-    
-    (mainnet, nile)
+    String::new()
 }
 
 /// Maps TRON blocks to extract ERC20FeeProxy payment events
 #[substreams::handlers::map]
 fn map_erc20_fee_proxy_payments(params: String, block: Block) -> Result<Payments, substreams::errors::Error> {
-    let (mainnet_proxy, nile_proxy) = parse_proxy_addresses(&params);
+    let proxy_address = parse_proxy_address(&params);
     
     let mut payments = Vec::new();
     let block_number = block.header.as_ref().map(|h| h.number).unwrap_or(0);
@@ -52,10 +44,10 @@ fn map_erc20_fee_proxy_payments(params: String, block: Block) -> Result<Payments
         // Get the transaction info to access logs
         if let Some(info) = &transaction.info {
             for log_entry in info.log.iter() {
-                // Check if this log is from one of our proxy contracts
+                // Check if this log is from our proxy contract
                 let contract_address = base58_encode(&log_entry.address);
                 
-                if contract_address != mainnet_proxy && contract_address != nile_proxy {
+                if contract_address != proxy_address {
                     continue;
                 }
 
@@ -246,11 +238,10 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_proxy_addresses() {
-        let params = "mainnet_proxy_address=TCUDPYnS9dH3WvFEaE7wN7vnDa51J4R4fd\nnile_proxy_address=THK5rNmrvCujhmrXa5DB1dASepwXTr9cJs";
-        let (mainnet, nile) = parse_proxy_addresses(params);
-        assert_eq!(mainnet, "TCUDPYnS9dH3WvFEaE7wN7vnDa51J4R4fd");
-        assert_eq!(nile, "THK5rNmrvCujhmrXa5DB1dASepwXTr9cJs");
+    fn test_parse_proxy_address() {
+        let params = "mainnet_proxy_address=TCUDPYnS9dH3WvFEaE7wN7vnDa51J4R4fd";
+        let address = parse_proxy_address(params);
+        assert_eq!(address, "TCUDPYnS9dH3WvFEaE7wN7vnDa51J4R4fd");
     }
 
     #[test]

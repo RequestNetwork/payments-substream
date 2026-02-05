@@ -4,10 +4,9 @@ This package contains a Substreams module for indexing ERC20FeeProxy payment eve
 
 ## Overview
 
-The module indexes `TransferWithReferenceAndFee` events from the deployed ERC20FeeProxy contracts:
+The module indexes `TransferWithReferenceAndFee` events from the deployed ERC20FeeProxy contract:
 
-- **Mainnet**: `TCUDPYnS9dH3WvFEaE7wN7vnDa51J4R4fd`
-- **Nile Testnet**: `THK5rNmrvCujhmrXa5DB1dASepwXTr9cJs`
+- **Mainnet**: `TCUDPYnS9dH3WvFEaE7wN7vnDa51J4R4fd` (block 79216121)
 
 ## Prerequisites
 
@@ -50,25 +49,52 @@ make run
 
 ## Deployment
 
-### Deploy as Substreams-powered Subgraph
+> **Note**: Substreams-Powered Subgraphs are not supported for non-EVM chains like TRON.
+> Use SQL sink or direct streaming for production deployments.
 
-1. Build and package the Substreams module:
+### Substreams Endpoint
 
+- **Mainnet (Streamingfast)**: `mainnet-evm.tron.streamingfast.io:443`
+
+### Option 1: SQL Sink (PostgreSQL/ClickHouse)
+
+1. Install the SQL sink:
+   ```bash
+   go install github.com/streamingfast/substreams-sink-sql/cmd/substreams-sink-sql@latest
+   ```
+
+2. Build and package:
    ```bash
    make package
    ```
 
-2. Deploy to The Graph:
+3. Run the sink:
    ```bash
-   graph deploy --studio request-payments-tron
+   substreams-sink-sql run \
+     "postgres://user:password@host:5432/database?sslmode=disable" \
+     ./request-network-tron-v0.1.0.spkg \
+     map_erc20_fee_proxy_payments \
+     -e mainnet-evm.tron.streamingfast.io:443
    ```
 
-### Subgraph Endpoints
+### Option 2: Direct Streaming
 
-Once deployed, the subgraph will be available at:
+Use the Go, Rust, or JavaScript SDKs to stream data directly to your application:
 
-- **Mainnet**: `https://api.studio.thegraph.com/query/67444/request-payments-tron/version/latest`
-- **Nile Testnet**: `https://api.studio.thegraph.com/query/67444/request-payments-tron-nile/version/latest`
+- [Go SDK](https://github.com/streamingfast/substreams-sink)
+- [Rust SDK](https://github.com/streamingfast/substreams-sink-rust)
+- [JavaScript SDK](https://github.com/substreams-js/substreams-js)
+
+### Option 3: Files/CSV
+
+Export data to files for batch processing:
+```bash
+substreams-sink-files run \
+  ./request-network-tron-v0.1.0.spkg \
+  map_erc20_fee_proxy_payments \
+  -e mainnet-evm.tron.streamingfast.io:443 \
+  --output-path ./output
+```
 
 ## Module Details
 

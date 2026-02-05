@@ -13,24 +13,18 @@ on:
     paths:
       - 'tron/**'
       - '.github/workflows/tron-build.yml'
-  release:
-    types: [published]
   workflow_dispatch:
     inputs:
       run_integration_tests:
-        description: 'Run integration tests against live endpoint'
+        description: 'Run integration tests against live endpoints'
         required: false
         default: false
         type: boolean
-      deploy_network:
-        description: 'Deploy to network (none, nile, or mainnet)'
+      publish_package:
+        description: 'Build and publish package artifact'
         required: false
-        default: 'none'
-        type: choice
-        options:
-          - none
-          - nile
-          - mainnet
+        default: false
+        type: boolean
 
 jobs:
   build-and-test:
@@ -77,17 +71,16 @@ jobs:
           fi
           echo "Build artifacts verified successfully"
 
-  integration-test:
-    name: Integration Test (Live Endpoint)
+  integration-test-mainnet:
+    name: Integration Test (Mainnet EVM)
     runs-on: ubuntu-latest
     needs: build-and-test
-    # Run on: manual trigger, push to main, release, or when deploying
+    # Run on: push to main (merge) or manual trigger
     # PRs only run unit tests (no API key needed)
     if: |
       github.event.inputs.run_integration_tests == 'true' ||
-      (github.event.inputs.deploy_network != '' && github.event.inputs.deploy_network != 'none') ||
-      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
-      github.event_name == 'release'
+      github.event.inputs.publish_package == 'true' ||
+      (github.event_name == 'push' && github.ref == 'refs/heads/main')
 
     steps:
       - name: Checkout repository
@@ -135,30 +128,29 @@ jobs:
           fi
           echo "✅ Package created: $SPKG_FILE"
 
-      - name: Run integration test against Nile testnet
+      - name: Deploy and test against Mainnet EVM (Streamingfast)
         working-directory: tron
         env:
           SUBSTREAMS_API_TOKEN: ${{ secrets.SUBSTREAMS_API_TOKEN }}
         run: |
-          echo "=== Integration Test: Running substreams against TRON Nile testnet ==="
-          echo "Block range: 63208782 to 63208882 (100 blocks from deployment)"
+          echo "=== Deploying to TRON Mainnet EVM (Streamingfast) ==="
+          echo "Endpoint: mainnet-evm.tron.streamingfast.io:443"
+          echo "Block range: 79216121 to 79216221 (100 blocks from mainnet deployment)"
           echo ""
           
           SPKG_FILE=$(ls -1 *.spkg | head -1)
           echo "Using package: $SPKG_FILE"
           
           # Run substreams and capture JSON output
-          # This tests the full pipeline: load WASM, connect to endpoint, process blocks, parse events
-          # Note: substreams run exits with 0 on success, non-zero on failure
           if ! substreams run "$SPKG_FILE" map_erc20_fee_proxy_payments \
-            -e tron.substreams.pinax.network:443 \
-            --start-block 63208782 \
+            -e mainnet-evm.tron.streamingfast.io:443 \
+            --start-block 79216121 \
             --stop-block +100 \
-            -o json 2>&1 | tee output.log; then
+            -o json 2>&1 | tee output_mainnet.log; then
             echo ""
             echo "❌ FAILED: Substreams command returned non-zero exit code"
             echo "Output:"
-            cat output.log
+            cat output_mainnet.log
             exit 1
           fi
           
@@ -166,17 +158,17 @@ jobs:
           echo "=== Validating Results ==="
           
           # If any payments were found, validate the structure
-          if grep -q '"payments"' output.log; then
+          if grep -q '"payments"' output_mainnet.log; then
             echo "✅ Payments data structure detected in output"
             
             # Extract and validate payment fields if present
-            if grep -q '"token_address"' output.log; then
+            if grep -q '"token_address"' output_mainnet.log; then
               echo "✅ Payment fields present: token_address"
             fi
-            if grep -q '"payment_reference"' output.log; then
+            if grep -q '"payment_reference"' output_mainnet.log; then
               echo "✅ Payment fields present: payment_reference"
             fi
-            if grep -q '"amount"' output.log; then
+            if grep -q '"amount"' output_mainnet.log; then
               echo "✅ Payment fields present: amount"
             fi
           else
@@ -184,21 +176,22 @@ jobs:
           fi
           
           echo ""
-          echo "=== Integration Test PASSED ==="
+          echo "=== Mainnet Integration Test PASSED ==="
           echo "The substreams module successfully:"
           echo "  - Loaded WASM module"
-          echo "  - Connected to TRON Nile endpoint via Pinax"
+          echo "  - Connected to TRON Mainnet EVM endpoint via Streamingfast"
           echo "  - Processed 100 blocks without errors"
           echo "  - Output valid JSON structure"
 
-  deploy-testnet:
-    name: Deploy to Nile Testnet
+  # Publish package artifact for download/deployment
+  publish-package:
+    name: Publish Mainnet Package
     runs-on: ubuntu-latest
-    needs: [build-and-test, integration-test]
-    # Deploy to testnet on: push to main, or manual with nile selected
+    needs: [build-and-test, integration-test-mainnet]
+    # Publish on: push to main (merge) or manual publish selection
     if: |
       (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
-      github.event.inputs.deploy_network == 'nile'
+      github.event.inputs.publish_package == 'true'
 
     steps:
       - name: Checkout repository
@@ -222,18 +215,10 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-
       - name: Install Substreams CLI
         run: |
           curl -sSL https://github.com/streamingfast/substreams/releases/latest/download/substreams_linux_x86_64.tar.gz | tar xz
           sudo mv substreams /usr/local/bin/
-
-      - name: Install Graph CLI
-        run: npm install -g @graphprotocol/graph-cli
 
       - name: Build WASM module
         working-directory: tron
@@ -243,7 +228,8 @@ jobs:
         working-directory: tron
         run: make package
 
-      - name: Verify package created
+      - name: Get package info
+        id: package_info
         working-directory: tron
         run: |
           SPKG_FILE=$(ls -1 *.spkg 2>/dev/null | head -1)
@@ -251,107 +237,44 @@ jobs:
             echo "ERROR: No .spkg package file found!"
             exit 1
           fi
-          echo "Package created successfully: $SPKG_FILE"
-
-      - name: Authenticate with The Graph Studio
-        run: graph auth --studio ${{ secrets.GRAPH_STUDIO_DEPLOY_KEY }}
-
-      - name: Deploy to Nile Testnet
-        working-directory: tron
-        run: |
+          echo "spkg_file=$SPKG_FILE" >> $GITHUB_OUTPUT
+          
           VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
-          COMMIT_SHA="${{ github.sha }}"
-          SHORT_SHA="${COMMIT_SHA:0:7}"
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
           
-          # Use commit SHA for testnet versions to track deployments
-          VERSION_LABEL="v${VERSION}-${SHORT_SHA}"
-          
-          echo "Deploying to request-payments-tron-nile with version: $VERSION_LABEL"
-          
-          graph deploy --studio request-payments-tron-nile --version-label "$VERSION_LABEL"
-          
-          echo "✅ Deployed to Nile testnet"
-          echo "Endpoint: https://api.studio.thegraph.com/query/67444/request-payments-tron-nile/version/latest"
+          echo "Package created successfully: $SPKG_FILE (version: $VERSION)"
 
-  deploy-mainnet:
-    name: Deploy to Mainnet
-    runs-on: ubuntu-latest
-    needs: [build-and-test, integration-test]
-    # Deploy to mainnet on: GitHub release published, or manual with mainnet selected
-    if: |
-      github.event_name == 'release' ||
-      github.event.inputs.deploy_network == 'mainnet'
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+      - name: Upload package artifact
+        uses: actions/upload-artifact@v4
         with:
-          targets: wasm32-unknown-unknown
+          name: request-network-tron-${{ steps.package_info.outputs.version }}
+          path: tron/${{ steps.package_info.outputs.spkg_file }}
+          retention-days: 90
 
-      - name: Cache Cargo dependencies
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/bin/
-            ~/.cargo/registry/index/
-            ~/.cargo/registry/cache/
-            ~/.cargo/git/db/
-            tron/target/
-          key: ${{ runner.os }}-cargo-${{ hashFiles('tron/Cargo.toml') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-
-      - name: Install Substreams CLI
+      - name: Package ready for deployment
         run: |
-          curl -sSL https://github.com/streamingfast/substreams/releases/latest/download/substreams_linux_x86_64.tar.gz | tar xz
-          sudo mv substreams /usr/local/bin/
-
-      - name: Install Graph CLI
-        run: npm install -g @graphprotocol/graph-cli
-
-      - name: Build WASM module
-        working-directory: tron
-        run: make build
-
-      - name: Package Substreams
-        working-directory: tron
-        run: make package
-
-      - name: Verify package created
-        working-directory: tron
-        run: |
-          SPKG_FILE=$(ls -1 *.spkg 2>/dev/null | head -1)
-          if [ -z "$SPKG_FILE" ]; then
-            echo "ERROR: No .spkg package file found!"
-            exit 1
-          fi
-          echo "Package created successfully: $SPKG_FILE"
-
-      - name: Authenticate with The Graph Studio
-        run: graph auth --studio ${{ secrets.GRAPH_STUDIO_DEPLOY_KEY }}
-
-      - name: Deploy to Mainnet
-        working-directory: tron
-        run: |
-          # For releases, use the release tag as version
-          if [ "${{ github.event_name }}" = "release" ]; then
-            VERSION="${{ github.event.release.tag_name }}"
-          else
-            VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
-            VERSION="v${VERSION}"
-          fi
-          
-          echo "Deploying to request-payments-tron with version: $VERSION"
-          
-          graph deploy --studio request-payments-tron --version-label "$VERSION"
-          
-          echo "✅ Deployed to Mainnet"
-          echo "Endpoint: https://api.studio.thegraph.com/query/67444/request-payments-tron/version/latest"
+          echo "=============================================="
+          echo "📦 Substreams Package Ready"
+          echo "=============================================="
+          echo ""
+          echo "Package: ${{ steps.package_info.outputs.spkg_file }}"
+          echo "Version: ${{ steps.package_info.outputs.version }}"
+          echo ""
+          echo "🔗 Endpoint:"
+          echo "  - Mainnet (Streamingfast): mainnet-evm.tron.streamingfast.io:443"
+          echo ""
+          echo "📖 Deployment Options:"
+          echo "  1. SQL Sink (PostgreSQL/ClickHouse):"
+          echo "     substreams-sink-sql run <DSN> <SPKG_FILE> map_erc20_fee_proxy_payments"
+          echo ""
+          echo "  2. Direct Streaming (Go/Rust/JS SDK):"
+          echo "     See https://docs.substreams.dev/how-to-guides/sinks/stream"
+          echo ""
+          echo "  3. Run locally:"
+          echo "     substreams run <SPKG_FILE> map_erc20_fee_proxy_payments \\"
+          echo "       -e mainnet-evm.tron.streamingfast.io:443 \\"
+          echo "       --start-block 79216121"
+          echo ""
+          echo "Note: Substreams-Powered Subgraphs are not supported for non-EVM chains."
+          echo "Use SQL sink or direct streaming for production deployments."
+          echo "=============================================="

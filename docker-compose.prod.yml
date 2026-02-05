@@ -1,0 +1,20 @@
+# Production Docker Compose for Easypanel
+# Uses Easypanel's built-in PostgreSQL service for cross-app database access
+
+services:
+  sink:
+    build:
+      context: .
+      dockerfile: Dockerfile.sink
+    container_name: tron-payments-sink
+    restart: unless-stopped
+    environment:
+      # Database connection - use Easypanel's internal PostgreSQL hostname
+      DSN: psql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD}@${POSTGRES_HOST}:${POSTGRES_PORT:-5432}/${POSTGRES_DB:-tron_payments}?sslmode=disable
+      # Streamingfast authentication
+      SUBSTREAMS_API_TOKEN: ${SUBSTREAMS_API_TOKEN}
+      # TRON mainnet endpoint
+      SUBSTREAMS_ENDPOINTS_CONFIG_TRON: mainnet.tron.streamingfast.io:443
+    # Optional: expose metrics port if needed
+    # ports:
+    #   - "9102:9102"

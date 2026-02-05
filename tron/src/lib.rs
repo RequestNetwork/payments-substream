@@ -10,6 +10,7 @@ use pb::protocol::transaction_info::Log;
 use pb::request::tron::v1::{Payment, Payments};
 use pb::sf::tron::r#type::v1::{Block, Transaction};
 use substreams::log;
+use substreams_database_change::pb::database::{table_change::Operation, DatabaseChanges};
 
 /// TransferWithReferenceAndFee event signature (keccak256 hash of event signature)
 /// Event: TransferWithReferenceAndFee(address,address,uint256,bytes indexed,uint256,address)
@@ -79,6 +80,33 @@ fn map_erc20_fee_proxy_payments(params: String, block: Block) -> Result<Payments
     }
 
     Ok(Payments { payments })
+}
+
+/// Converts Payments to DatabaseChanges for SQL sink
+#[substreams::handlers::map]
+fn db_out(payments: Payments) -> Result<DatabaseChanges, substreams::errors::Error> {
+    let mut database_changes = DatabaseChanges::default();
+
+    for payment in payments.payments {
+        // Create unique key from tx_hash + payment_reference
+        let key = format!("{}:{}", payment.tx_hash, payment.payment_reference);
+        
+        database_changes
+            .push_change("payments", &key, 0, Operation::Create)
+            .change("tx_hash", ("", payment.tx_hash.as_str()))
+            .change("block_number", ("", payment.block.to_string().as_str()))
+            .change("timestamp", ("", payment.timestamp.to_string().as_str()))
+            .change("contract_address", ("", payment.contract_address.as_str()))
+            .change("token_address", ("", payment.token_address.as_str()))
+            .change("from_address", ("", payment.from.as_str()))
+            .change("to_address", ("", payment.to.as_str()))
+            .change("amount", ("", payment.amount.as_str()))
+            .change("fee_amount", ("", payment.fee_amount.as_str()))
+            .change("fee_address", ("", payment.fee_address.as_str()))
+            .change("payment_reference", ("", payment.payment_reference.as_str()));
+    }
+
+    Ok(database_changes)
 }
 
 /// Parses a TransferWithReferenceAndFee event from a log entry

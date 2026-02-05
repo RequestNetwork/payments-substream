@@ -10,6 +10,8 @@ package:
 
 imports:
   tron: https://spkg.io/streamingfast/tron-foundational-v0.1.2.spkg
+  sql: https://github.com/streamingfast/substreams-sink-sql/releases/download/protodefs-v1.0.3/substreams-sink-sql-protodefs-v1.0.3.spkg
+  database_change: https://github.com/streamingfast/substreams-sink-database-changes/releases/download/v1.2.1/substreams-database-change-v1.2.1.spkg
 
 protobuf:
   files:
@@ -39,7 +41,24 @@ modules:
       Params format:
         mainnet_proxy_address=<address>
 
+  - name: db_out
+    kind: map
+    initialBlock: 79216121
+    inputs:
+      - map: map_erc20_fee_proxy_payments
+    output:
+      type: proto:sf.substreams.sink.database.v1.DatabaseChanges
+    doc: |
+      Converts payment events to database changes for SQL sink.
+
 network: tron
+
+sink:
+  module: db_out
+  type: sf.substreams.sink.sql.v1.Service
+  config:
+    schema: "./schema.sql"
+    engine: postgres
 
 params:
   map_erc20_fee_proxy_payments: |

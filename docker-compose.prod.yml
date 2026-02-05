@@ -9,12 +9,10 @@ services:
     container_name: tron-payments-sink
     restart: unless-stopped
     environment:
-      # Database connection - use Easypanel's internal PostgreSQL hostname
-      DSN: psql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD}@${POSTGRES_HOST}:${POSTGRES_PORT:-5432}/${POSTGRES_DB:-tron_payments}?sslmode=disable
+      # Database connection - set the full DSN directly in Easypanel
+      # Format: psql://user:password@host:port/database?sslmode=disable
+      DSN: ${DSN}
       # Streamingfast authentication
       SUBSTREAMS_API_TOKEN: ${SUBSTREAMS_API_TOKEN}
       # TRON mainnet endpoint
       SUBSTREAMS_ENDPOINTS_CONFIG_TRON: mainnet.tron.streamingfast.io:443
-    # Optional: expose metrics port if needed
-    # ports:
-    #   - "9102:9102"

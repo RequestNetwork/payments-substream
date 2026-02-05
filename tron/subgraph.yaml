@@ -1,5 +1,5 @@
 specVersion: 1.0.0
-description: Request Network ERC20FeeProxy Payments on TRON
+description: Request Network Payments on TRON
 repository: https://github.com/RequestNetwork/payments-substream
 
 indexerHints:

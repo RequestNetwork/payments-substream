@@ -338,8 +338,8 @@ jobs:
           # Get version from Cargo.toml
           VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
           
-          # Deploy to studio (use the subgraph slug from Subgraph Studio)
-          graph deploy --studio request-network-tron-payments \
+          # Deploy to studio (follows Request Network naming: request-payments-{network})
+          graph deploy --studio request-payments-tron \
             --version-label "v${VERSION}" \
             --skip-validation
           
@@ -348,6 +348,7 @@ jobs:
           echo "✅ Subgraph Deployed to The Graph Studio"
           echo "=============================================="
           echo ""
+          echo "Subgraph: request-payments-tron"
           echo "Version: v${VERSION}"
           echo ""
           echo "Next steps:"

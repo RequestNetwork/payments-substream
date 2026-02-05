@@ -294,7 +294,7 @@ graph build
 graph auth --studio <DEPLOY_KEY>
 
 # Deploy to Studio for testing
-graph deploy --studio request-network-tron-payments
+graph deploy --studio request-payments-tron
 ```
 
 #### 4. Publish to The Graph Network (Production)

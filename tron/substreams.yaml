@@ -12,6 +12,7 @@ imports:
   tron: https://spkg.io/streamingfast/tron-foundational-v0.1.2.spkg
   sql: https://github.com/streamingfast/substreams-sink-sql/releases/download/protodefs-v1.0.3/substreams-sink-sql-protodefs-v1.0.3.spkg
   database_change: https://github.com/streamingfast/substreams-sink-database-changes/releases/download/v1.2.1/substreams-database-change-v1.2.1.spkg
+  entity_change: https://github.com/streamingfast/substreams-sink-entity-changes/releases/download/v1.3.2/substreams-sink-entity-changes-v1.3.2.spkg
 
 protobuf:
   files:
@@ -51,6 +52,17 @@ modules:
       type: proto:sf.substreams.sink.database.v1.DatabaseChanges
     doc: |
       Converts payment events to database changes for SQL sink.
+
+  - name: graph_out
+    kind: map
+    initialBlock: 79216121
+    inputs:
+      - map: map_erc20_fee_proxy_payments
+    output:
+      type: proto:sf.substreams.sink.entity.v1.EntityChanges
+    doc: |
+      Converts payment events to entity changes for The Graph subgraph sink.
+      Deploy as a Substreams-powered subgraph on The Graph Network.
 
 network: tron
 

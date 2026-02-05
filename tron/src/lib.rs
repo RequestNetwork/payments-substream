@@ -11,6 +11,8 @@ use pb::request::tron::v1::{Payment, Payments};
 use pb::sf::tron::r#type::v1::{Block, Transaction};
 use substreams::log;
 use substreams_database_change::pb::database::{table_change::Operation, DatabaseChanges};
+use substreams_entity_change::pb::entity::EntityChanges;
+use substreams_entity_change::tables::Tables;
 
 /// TransferWithReferenceAndFee event signature (keccak256 hash of event signature)
 /// Event: TransferWithReferenceAndFee(address,address,uint256,bytes indexed,uint256,address)
@@ -125,6 +127,34 @@ fn db_out(payments: Payments) -> Result<DatabaseChanges, substreams::errors::Err
     }
 
     Ok(database_changes)
+}
+
+/// Converts Payments to EntityChanges for The Graph subgraph sink
+#[substreams::handlers::map]
+fn graph_out(payments: Payments) -> Result<EntityChanges, substreams::errors::Error> {
+    let mut tables = Tables::new();
+
+    for payment in payments.payments {
+        // Create unique ID: chain-txHash-paymentReference
+        let id = format!("{}-{}-{}", payment.chain, payment.tx_hash, payment.payment_reference);
+        
+        tables
+            .create_row("Payment", &id)
+            .set("chain", &payment.chain)
+            .set("tokenAddress", &payment.token_address)
+            .set("to", &payment.to)
+            .set("amount", payment.amount.parse::<i64>().unwrap_or(0))
+            .set("reference", hex::decode(&payment.payment_reference).unwrap_or_default())
+            .set("feeAmount", payment.fee_amount.parse::<i64>().unwrap_or(0))
+            .set("feeAddress", &payment.fee_address)
+            .set("from", &payment.from)
+            .set("block", payment.block as i32)
+            .set("timestamp", payment.timestamp as i32)
+            .set("txHash", &payment.tx_hash)
+            .set("contractAddress", &payment.contract_address);
+    }
+
+    Ok(tables.to_entity_changes())
 }
 
 /// Parses a TransferWithReferenceAndFee event from a log entry

@@ -1,11 +1,14 @@
-# GraphQL schema for Request Network TRON payments
-# This schema is used when deploying a Substreams-powered subgraph
+# GraphQL schema for Request Network payments (multi-chain)
+# This schema is used when deploying a Substreams-powered subgraph to The Graph Network
 
 type Payment @entity {
-  "Unique identifier: txHash-logIndex"
+  "Unique identifier: chain-txHash-paymentReference"
   id: ID!
 
-  "The TRC20 token contract address"
+  "The blockchain network identifier (e.g., tron, ethereum, polygon)"
+  chain: String!
+
+  "The token contract address (TRC20/ERC20)"
   tokenAddress: String!
 
   "The payment recipient address"

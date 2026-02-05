@@ -1,0 +1,21 @@
+specVersion: 1.0.0
+description: Request Network ERC20FeeProxy Payments on TRON
+repository: https://github.com/RequestNetwork/payments-substream
+
+indexerHints:
+  prune: auto
+
+schema:
+  file: ./schema.graphql
+
+dataSources:
+  - kind: substreams
+    name: RequestPayments
+    network: tron
+    source:
+      package:
+        moduleName: graph_out
+        file: ./request-network-tron-v0.1.0.spkg
+    mapping:
+      apiVersion: 0.0.7
+      kind: substreams/graph-entities

@@ -1,8 +1,9 @@
 # Rust build artifacts
 target/
 
-# Substreams packages (built during CI)
+# Substreams packages (built during CI) - except production package
 *.spkg
+!tron/*.spkg
 
 # IDE
 .idea/

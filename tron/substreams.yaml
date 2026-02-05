@@ -1,0 +1,67 @@
+specVersion: v0.1.0
+package:
+  name: request_network_tron
+  version: v0.1.0
+  url: https://github.com/RequestNetwork/payments-substream
+  doc: |
+    Request Network TRON Substreams module for indexing ERC20FeeProxy payment events.
+    Indexes TransferWithReferenceAndFee events from the deployed ERC20FeeProxy contract
+    on TRON mainnet.
+
+imports:
+  tron: https://spkg.io/streamingfast/tron-foundational-v0.1.2.spkg
+  sql: https://github.com/streamingfast/substreams-sink-sql/releases/download/protodefs-v1.0.3/substreams-sink-sql-protodefs-v1.0.3.spkg
+  database_change: https://github.com/streamingfast/substreams-sink-database-changes/releases/download/v1.2.1/substreams-database-change-v1.2.1.spkg
+
+protobuf:
+  files:
+    - request/tron/v1/payments.proto
+  importPaths:
+    - ./proto
+
+binaries:
+  default:
+    type: wasm/rust-v1
+    file: ./target/wasm32-unknown-unknown/release/request_network_tron.wasm
+
+modules:
+  - name: map_erc20_fee_proxy_payments
+    kind: map
+    initialBlock: 79216121 # TRON mainnet deployment block
+    inputs:
+      - params: string
+      - source: sf.tron.type.v1.Block
+    output:
+      type: proto:request.tron.v1.Payments
+    doc: |
+      Extracts TransferWithReferenceAndFee events from ERC20FeeProxy contracts.
+      Filters transactions to the known proxy contract addresses and parses
+      the event logs to extract payment details.
+
+      Params format:
+        mainnet_proxy_address=<address>
+        chain=<chain_identifier>
+
+  - name: db_out
+    kind: map
+    initialBlock: 79216121
+    inputs:
+      - map: map_erc20_fee_proxy_payments
+    output:
+      type: proto:sf.substreams.sink.database.v1.DatabaseChanges
+    doc: |
+      Converts payment events to database changes for SQL sink.
+
+network: tron
+
+sink:
+  module: db_out
+  type: sf.substreams.sink.sql.v1.Service
+  config:
+    schema: "./schema.sql"
+    engine: postgres
+
+params:
+  map_erc20_fee_proxy_payments: |
+    mainnet_proxy_address=TCUDPYnS9dH3WvFEaE7wN7vnDa51J4R4fd
+    chain=tron

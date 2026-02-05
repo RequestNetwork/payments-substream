@@ -1,0 +1,21 @@
+# Production Docker Compose for Easypanel
+# Uses Easypanel's built-in PostgreSQL service for cross-app database access
+
+services:
+  sink:
+    build:
+      context: .
+      dockerfile: Dockerfile.sink
+    restart: unless-stopped
+    environment:
+      # These variables are passed through from Easypanel's environment settings
+      - DSN
+      - SUBSTREAMS_API_TOKEN
+      # TRON mainnet endpoint (hardcoded)
+      - SUBSTREAMS_ENDPOINTS_CONFIG_TRON=mainnet.tron.streamingfast.io:443
+    networks:
+      - easypanel
+
+networks:
+  easypanel:
+    external: true

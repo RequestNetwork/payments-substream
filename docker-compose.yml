@@ -1,0 +1,37 @@
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:15-alpine
+    container_name: tron-payments-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: tron_payments
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Substreams SQL Sink
+  sink:
+    build:
+      context: .
+      dockerfile: Dockerfile.sink
+    container_name: tron-payments-sink
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DSN: psql://postgres:${POSTGRES_PASSWORD}@postgres:5432/tron_payments?sslmode=disable
+      SUBSTREAMS_API_TOKEN: ${SUBSTREAMS_API_TOKEN}
+      SUBSTREAMS_ENDPOINTS_CONFIG_TRON: mainnet.tron.streamingfast.io:443
+
+volumes:
+  postgres_data:

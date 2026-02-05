@@ -1,0 +1,38 @@
+# Substreams SQL Sink for TRON Payments
+FROM ubuntu:22.04
+
+# Install dependencies
+RUN apt-get update && apt-get install -y \
+    ca-certificates \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Download substreams-sink-sql binary (v4.12.0) - detect architecture
+ARG TARGETARCH
+RUN ARCH=$(echo ${TARGETARCH:-amd64} | sed 's/amd64/x86_64/' | sed 's/arm64/arm64/') && \
+    curl -sSL "https://github.com/streamingfast/substreams-sink-sql/releases/download/v4.12.0/substreams-sink-sql_linux_${ARCH}.tar.gz" -o /tmp/sink.tar.gz && \
+    tar xzf /tmp/sink.tar.gz -C /usr/local/bin/ && \
+    rm /tmp/sink.tar.gz && \
+    chmod +x /usr/local/bin/substreams-sink-sql
+
+# Copy the substreams package and schema
+COPY tron/request-network-tron-v0.1.0.spkg /app/
+COPY tron/schema.sql /app/
+
+WORKDIR /app
+
+# Environment variables (override in deployment)
+ENV DSN=""
+ENV SUBSTREAMS_API_TOKEN=""
+# Endpoint configured via SUBSTREAMS_ENDPOINTS_CONFIG_TRON env var
+ENV SUBSTREAMS_ENDPOINTS_CONFIG_TRON="mainnet.tron.streamingfast.io:443"
+
+# Create entrypoint script - uses sink config from the package
+RUN printf '#!/bin/bash\nset -e\n\n# Setup the database schema first\necho "Setting up database schema..."\nsubstreams-sink-sql setup "$DSN" /app/request-network-tron-v0.1.0.spkg || true\n\n# Run the sink\necho "Starting sink..."\nexec substreams-sink-sql run "$DSN" /app/request-network-tron-v0.1.0.spkg\n' > /entrypoint.sh && \
+    chmod +x /entrypoint.sh
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+  CMD pgrep substreams-sink-sql || exit 1
+
+ENTRYPOINT ["/bin/bash", "/entrypoint.sh"]

@@ -36,6 +36,9 @@ message Payment {
   
   // The proxy contract address that emitted the event
   string contract_address = 11;
+  
+  // The blockchain network identifier (e.g., "tron", "ethereum", "polygon")
+  string chain = 12;
 }
 
 // Collection of payment events

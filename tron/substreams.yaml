@@ -40,6 +40,7 @@ modules:
 
       Params format:
         mainnet_proxy_address=<address>
+        chain=<chain_identifier>
 
   - name: db_out
     kind: map
@@ -63,3 +64,4 @@ sink:
 params:
   map_erc20_fee_proxy_payments: |
     mainnet_proxy_address=TCUDPYnS9dH3WvFEaE7wN7vnDa51J4R4fd
+    chain=tron

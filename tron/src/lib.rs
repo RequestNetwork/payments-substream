@@ -18,22 +18,38 @@ use substreams_database_change::pb::database::{table_change::Operation, Database
 const TRANSFER_WITH_REF_AND_FEE_TOPIC: &str =
     "9f16cbcc523c67a60c450e5ffe4f3b7b6dbe772e7abcadb2686ce029a9a0a2b6";
 
-/// Parses proxy address from the params string
-/// Expected format: "mainnet_proxy_address=ADDR"
-fn parse_proxy_address(params: &str) -> String {
+/// Parses a parameter value from the params string
+/// Expected format: "key=value" (one per line)
+fn parse_param(params: &str, key: &str) -> String {
     for line in params.lines() {
         let parts: Vec<&str> = line.splitn(2, '=').collect();
-        if parts.len() == 2 && parts[0].trim() == "mainnet_proxy_address" {
+        if parts.len() == 2 && parts[0].trim() == key {
             return parts[1].trim().to_string();
         }
     }
     String::new()
 }
 
+/// Parses proxy address from the params string
+fn parse_proxy_address(params: &str) -> String {
+    parse_param(params, "mainnet_proxy_address")
+}
+
+/// Parses chain identifier from the params string (defaults to "tron")
+fn parse_chain(params: &str) -> String {
+    let chain = parse_param(params, "chain");
+    if chain.is_empty() {
+        "tron".to_string()
+    } else {
+        chain
+    }
+}
+
 /// Maps TRON blocks to extract ERC20FeeProxy payment events
 #[substreams::handlers::map]
 fn map_erc20_fee_proxy_payments(params: String, block: Block) -> Result<Payments, substreams::errors::Error> {
     let proxy_address = parse_proxy_address(&params);
+    let chain = parse_chain(&params);
     
     let mut payments = Vec::new();
     let block_number = block.header.as_ref().map(|h| h.number).unwrap_or(0);
@@ -72,6 +88,7 @@ fn map_erc20_fee_proxy_payments(params: String, block: Block) -> Result<Payments
                     block_number,
                     block_timestamp,
                     transaction,
+                    &chain,
                 ) {
                     payments.push(payment);
                 }
@@ -88,11 +105,12 @@ fn db_out(payments: Payments) -> Result<DatabaseChanges, substreams::errors::Err
     let mut database_changes = DatabaseChanges::default();
 
     for payment in payments.payments {
-        // Create unique key from tx_hash + payment_reference
-        let key = format!("{}:{}", payment.tx_hash, payment.payment_reference);
+        // Create unique key from chain + tx_hash + payment_reference
+        let key = format!("{}:{}:{}", payment.chain, payment.tx_hash, payment.payment_reference);
         
         database_changes
             .push_change("payments", &key, 0, Operation::Create)
+            .change("chain", ("", payment.chain.as_str()))
             .change("tx_hash", ("", payment.tx_hash.as_str()))
             .change("block_number", ("", payment.block.to_string().as_str()))
             .change("timestamp", ("", payment.timestamp.to_string().as_str()))
@@ -117,6 +135,7 @@ fn parse_transfer_with_reference_and_fee(
     block_number: u64,
     block_timestamp: u64,
     transaction: &Transaction,
+    chain: &str,
 ) -> Option<Payment> {
     // Event: TransferWithReferenceAndFee(address tokenAddress, address to, uint256 amount, 
     //                                    bytes indexed paymentReference, uint256 feeAmount, address feeAddress)
@@ -172,6 +191,7 @@ fn parse_transfer_with_reference_and_fee(
         timestamp: block_timestamp,
         tx_hash: tx_hash.to_string(),
         contract_address: contract_address.to_string(),
+        chain: chain.to_string(),
     })
 }
 
@@ -270,6 +290,28 @@ mod tests {
         let params = "mainnet_proxy_address=TCUDPYnS9dH3WvFEaE7wN7vnDa51J4R4fd";
         let address = parse_proxy_address(params);
         assert_eq!(address, "TCUDPYnS9dH3WvFEaE7wN7vnDa51J4R4fd");
+    }
+
+    #[test]
+    fn test_parse_chain() {
+        let params = "mainnet_proxy_address=TCUDPYnS9dH3WvFEaE7wN7vnDa51J4R4fd\nchain=tron";
+        let chain = parse_chain(params);
+        assert_eq!(chain, "tron");
+    }
+
+    #[test]
+    fn test_parse_chain_default() {
+        // When chain is not specified, should default to "tron"
+        let params = "mainnet_proxy_address=TCUDPYnS9dH3WvFEaE7wN7vnDa51J4R4fd";
+        let chain = parse_chain(params);
+        assert_eq!(chain, "tron");
+    }
+
+    #[test]
+    fn test_parse_chain_ethereum() {
+        let params = "mainnet_proxy_address=0x123\nchain=ethereum";
+        let chain = parse_chain(params);
+        assert_eq!(chain, "ethereum");
     }
 
     #[test]

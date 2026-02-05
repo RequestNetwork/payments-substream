@@ -1,7 +1,8 @@
--- Schema for Request Network TRON ERC20FeeProxy payments
+-- Schema for Request Network ERC20FeeProxy payments (multi-chain)
 
 CREATE TABLE IF NOT EXISTS payments (
     id TEXT PRIMARY KEY,
+    chain TEXT NOT NULL,
     tx_hash TEXT NOT NULL,
     block_number BIGINT NOT NULL,
     timestamp BIGINT NOT NULL,
@@ -16,6 +17,7 @@ CREATE TABLE IF NOT EXISTS payments (
 );
 
 -- Indexes for common queries
+CREATE INDEX IF NOT EXISTS idx_payments_chain ON payments(chain);
 CREATE INDEX IF NOT EXISTS idx_payments_tx_hash ON payments(tx_hash);
 CREATE INDEX IF NOT EXISTS idx_payments_block_number ON payments(block_number);
 CREATE INDEX IF NOT EXISTS idx_payments_timestamp ON payments(timestamp);
@@ -23,3 +25,4 @@ CREATE INDEX IF NOT EXISTS idx_payments_payment_reference ON payments(payment_re
 CREATE INDEX IF NOT EXISTS idx_payments_from_address ON payments(from_address);
 CREATE INDEX IF NOT EXISTS idx_payments_to_address ON payments(to_address);
 CREATE INDEX IF NOT EXISTS idx_payments_token_address ON payments(token_address);
+CREATE INDEX IF NOT EXISTS idx_payments_chain_block ON payments(chain, block_number);

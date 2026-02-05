@@ -56,6 +56,7 @@ fn map_erc20_fee_proxy_payments(params: String, block: Block) -> Result<Payments
     let block_timestamp = block.header.as_ref().map(|h| h.timestamp).unwrap_or(0) as u64 / 1000; // Convert from ms to seconds
 
     for transaction in block.transactions.iter() {
+        // TRON tx hashes don't have 0x prefix (unlike Ethereum)
         let tx_hash = hex::encode(&transaction.txid);
         
         // Get the transaction info to access logs
@@ -162,8 +163,8 @@ fn parse_transfer_with_reference_and_fee(
         return None;
     }
 
-    // Extract payment reference from indexed topic
-    let payment_reference = hex::encode(&log_entry.topics[1]);
+    // Extract payment reference from indexed topic (with 0x prefix to match Ethereum subgraph format)
+    let payment_reference = format!("0x{}", hex::encode(&log_entry.topics[1]));
 
     // Parse non-indexed parameters from data
     let token_address = parse_address_from_data(data, 0)?;

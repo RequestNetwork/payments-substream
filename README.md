@@ -251,6 +251,73 @@ docker run -d \
   payments-sink
 ```
 
+## GraphQL API (Hasura)
+
+The PostgreSQL database is exposed via Hasura, providing a GraphQL API for the Request Network SDK to query payments.
+
+### Architecture
+
+```
+┌─────────────┐     ┌──────────────┐     ┌──────────────┐     ┌──────────────┐
+│    TRON     │────▶│  Substream   │────▶│  PostgreSQL  │────▶│    Hasura    │
+│  Blockchain │     │    Sink      │     │  (payments)  │     │   GraphQL    │
+└─────────────┘     └──────────────┘     └──────────────┘     └──────┬───────┘
+                                                                     │
+                                                                     ▼
+                                                             ┌──────────────┐
+                                                             │ Request SDK  │
+                                                             │  (payment    │
+                                                             │  detection)  │
+                                                             └──────────────┘
+```
+
+### GraphQL Endpoint
+
+- **Staging**: `https://graphql.stage.request.network/v1/graphql`
+- **Production**: `https://graphql.request.network/v1/graphql`
+
+### Example Query
+
+```graphql
+query GetPayments($reference: String!, $chain: String) {
+  payments(
+    where: {
+      payment_reference: { _eq: $reference }
+      chain: { _eq: $chain }
+    }
+    order_by: { block_number: asc }
+  ) {
+    id
+    chain
+    tx_hash
+    block_number
+    timestamp
+    token_address
+    from_address
+    to_address
+    amount
+    fee_amount
+    fee_address
+    payment_reference
+    contract_address
+  }
+}
+```
+
+### Query by Payment Reference
+
+```bash
+curl -X POST https://graphql.stage.request.network/v1/graphql \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "query { payments(where: { payment_reference: { _eq: \"0xabc123...\" } }) { tx_hash amount chain } }"
+  }'
+```
+
+### SDK Integration
+
+The Request Network SDK uses a custom info retriever to query the Hasura endpoint for TRON payments. See the `@requestnetwork/payment-detection` package for implementation details.
+
 ## Multi-Chain Support
 
 The payments table includes a `chain` field to support multiple networks:

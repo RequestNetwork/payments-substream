@@ -122,12 +122,36 @@ fn db_out(payments: Payments) -> Result<DatabaseChanges, substreams::errors::Err
             .change("amount", ("", payment.amount.as_str()))
             .change("fee_amount", ("", payment.fee_amount.as_str()))
             .change("fee_address", ("", payment.fee_address.as_str()))
-            .change("payment_reference", ("", payment.payment_reference.as_str()));
+            .change("payment_reference", ("", payment.payment_reference.as_str()))
+            .change("energy_used", ("", payment.energy_used.as_str()))
+            .change("energy_fee", ("", payment.energy_fee.as_str()))
+            .change("net_fee", ("", payment.net_fee.as_str()));
     }
 
     Ok(database_changes)
 }
 
+
+/// Extracts TRON resource information from the transaction
+/// Returns (energy_used, energy_fee, net_fee) as strings
+fn extract_resource_info(transaction: &Transaction) -> (String, String, String) {
+    // Get energy usage from transaction directly (available in sf.tron.type.v1.Transaction)
+    let tx_energy_used = transaction.energy_used;
+    
+    // Try to get receipt info from transaction.info for more detailed data
+    let (energy_usage_total, energy_fee, net_fee) = transaction
+        .info
+        .as_ref()
+        .and_then(|info| info.receipt.as_ref())
+        .map(|receipt| (receipt.energy_usage_total, receipt.energy_fee, receipt.net_fee))
+        .unwrap_or((tx_energy_used, 0, 0));
+    
+    (
+        energy_usage_total.to_string(),
+        energy_fee.to_string(),
+        net_fee.to_string(),
+    )
+}
 
 /// Parses a TransferWithReferenceAndFee event from a log entry
 fn parse_transfer_with_reference_and_fee(
@@ -181,6 +205,9 @@ fn parse_transfer_with_reference_and_fee(
         .map(|p| extract_owner_address(p))
         .unwrap_or_default();
 
+    // Extract TRON resource information (energy and bandwidth)
+    let (energy_used, energy_fee, net_fee) = extract_resource_info(transaction);
+
     Some(Payment {
         token_address,
         to,
@@ -194,6 +221,9 @@ fn parse_transfer_with_reference_and_fee(
         tx_hash: tx_hash.to_string(),
         contract_address: contract_address.to_string(),
         chain: chain.to_string(),
+        energy_used,
+        energy_fee,
+        net_fee,
     })
 }
 

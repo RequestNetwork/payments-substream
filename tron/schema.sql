@@ -13,7 +13,10 @@ CREATE TABLE IF NOT EXISTS payments (
     amount NUMERIC NOT NULL,
     fee_amount NUMERIC NOT NULL,
     fee_address TEXT NOT NULL,
-    payment_reference TEXT NOT NULL
+    payment_reference TEXT NOT NULL,
+    energy_used TEXT,
+    energy_fee TEXT,
+    net_fee TEXT
 );
 
 -- Indexes for common queries

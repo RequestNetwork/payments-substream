@@ -40,6 +40,15 @@ pub struct Payment {
     /// The blockchain network identifier (e.g., "tron", "ethereum", "polygon")
     #[prost(string, tag="12")]
     pub chain: ::prost::alloc::string::String,
+    /// Energy used (TRON's equivalent of gas)
+    #[prost(string, tag="13")]
+    pub energy_used: ::prost::alloc::string::String,
+    /// Energy fee paid in SUN (TRON's smallest unit)
+    #[prost(string, tag="14")]
+    pub energy_fee: ::prost::alloc::string::String,
+    /// Network/Bandwidth fee paid in SUN
+    #[prost(string, tag="15")]
+    pub net_fee: ::prost::alloc::string::String,
 }
 /// Collection of payment events
 #[allow(clippy::derive_partial_eq_without_eq)]

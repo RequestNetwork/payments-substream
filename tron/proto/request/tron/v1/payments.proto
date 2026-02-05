@@ -39,6 +39,15 @@ message Payment {
   
   // The blockchain network identifier (e.g., "tron", "ethereum", "polygon")
   string chain = 12;
+  
+  // Energy used (TRON's equivalent of gas)
+  string energy_used = 13;
+  
+  // Energy fee paid in SUN (TRON's smallest unit)
+  string energy_fee = 14;
+  
+  // Network/Bandwidth fee paid in SUN
+  string net_fee = 15;
 }
 
 // Collection of payment events

@@ -9,10 +9,8 @@ services:
     container_name: tron-payments-sink
     restart: unless-stopped
     environment:
-      # Database connection - set the full DSN directly in Easypanel
-      # Format: psql://user:password@host:port/database?sslmode=disable
-      DSN: ${DSN}
-      # Streamingfast authentication
-      SUBSTREAMS_API_TOKEN: ${SUBSTREAMS_API_TOKEN}
-      # TRON mainnet endpoint
-      SUBSTREAMS_ENDPOINTS_CONFIG_TRON: mainnet.tron.streamingfast.io:443
+      # These variables are passed through from Easypanel's environment settings
+      - DSN
+      - SUBSTREAMS_API_TOKEN
+      # TRON mainnet endpoint (hardcoded)
+      - SUBSTREAMS_ENDPOINTS_CONFIG_TRON=mainnet.tron.streamingfast.io:443

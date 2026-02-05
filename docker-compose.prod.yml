@@ -14,3 +14,9 @@ services:
       - SUBSTREAMS_API_TOKEN
       # TRON mainnet endpoint (hardcoded)
       - SUBSTREAMS_ENDPOINTS_CONFIG_TRON=mainnet.tron.streamingfast.io:443
+    networks:
+      - easypanel
+
+networks:
+  easypanel:
+    external: true

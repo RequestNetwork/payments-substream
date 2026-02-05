@@ -45,9 +45,8 @@ payments-substream/
 │   │   └── request/tron/v1/
 │   │       └── payments.proto     # Payment message definitions
 │   ├── schema.sql                 # PostgreSQL schema for SQL sink
-│   ├── schema.graphql             # GraphQL schema for The Graph
+│   ├── schema.graphql             # GraphQL schema (for future use)
 │   ├── substreams.yaml            # Substream manifest
-│   ├── subgraph.yaml              # The Graph subgraph manifest
 │   ├── Cargo.toml                 # Rust dependencies
 │   └── Makefile                   # Build commands
 ├── docker-compose.yml             # Local development setup
@@ -251,101 +250,6 @@ docker run -d \
   -e SUBSTREAMS_API_TOKEN="your-token" \
   payments-sink
 ```
-
-### Deploy to The Graph Network (Decentralized)
-
-Deploy as a Substreams-powered subgraph to The Graph's decentralized network. Indexers worldwide will host and serve your data - no infrastructure to maintain.
-
-#### Prerequisites
-
-```bash
-# Install The Graph CLI
-npm install -g @graphprotocol/graph-cli
-
-# ETH on Arbitrum (for publishing to The Graph Network)
-```
-
-#### 1. Build the Substream Package
-
-```bash
-cd tron
-
-# Build and package
-make build
-make package
-```
-
-#### 2. Build the Subgraph
-
-```bash
-cd tron
-
-# Generate code from schema
-graph codegen
-
-# Build the subgraph
-graph build
-```
-
-#### 3. Deploy to Subgraph Studio (Testing)
-
-```bash
-# Authenticate with Subgraph Studio
-graph auth --studio <DEPLOY_KEY>
-
-# Deploy to Studio for testing
-graph deploy --studio request-payments-tron
-```
-
-#### 4. Publish to The Graph Network (Production)
-
-```bash
-# Publish to decentralized network
-graph publish
-```
-
-This opens a browser window where you:
-1. Fill in subgraph metadata (name, description)
-2. Select "The Graph Network" as destination
-3. Sign the transaction with your wallet (requires ETH on Arbitrum)
-
-After publishing, indexers will start indexing your subgraph.
-
-#### 5. Query the Subgraph
-
-Once indexed, query via The Graph Gateway:
-
-```graphql
-{
-  payments(
-    where: { reference: "0xabc123..." }
-    orderBy: block
-    orderDirection: desc
-  ) {
-    id
-    chain
-    txHash
-    amount
-    from
-    to
-    tokenAddress
-    feeAmount
-    timestamp
-  }
-}
-```
-
-Gateway URL:
-```
-https://gateway.thegraph.com/api/[api-key]/subgraphs/id/[subgraph-id]
-```
-
-#### Benefits of The Graph Network
-
-- **Decentralized**: No single point of failure
-- **No infrastructure**: Indexers run the nodes
-- **100x faster**: Substreams-powered indexing
-- **SDK compatible**: Request Network SDK already supports TheGraph
 
 ## Multi-Chain Support
 

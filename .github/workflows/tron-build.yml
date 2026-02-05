@@ -25,11 +25,6 @@ on:
         required: false
         default: false
         type: boolean
-      deploy_subgraph:
-        description: 'Deploy subgraph to The Graph Studio'
-        required: false
-        default: false
-        type: boolean
 
 jobs:
   build-and-test:
@@ -264,95 +259,4 @@ jobs:
           echo ""
           echo "Package: ${{ steps.package_info.outputs.spkg_file }}"
           echo "Version: ${{ steps.package_info.outputs.version }}"
-          echo "=============================================="
-
-  # Deploy subgraph to The Graph Network
-  deploy-subgraph:
-    name: Deploy Subgraph to The Graph
-    runs-on: ubuntu-latest
-    needs: [build-and-test, integration-test-mainnet]
-    # Deploy on: push to main (merge) or manual trigger
-    if: |
-      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
-      github.event.inputs.deploy_subgraph == 'true'
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: wasm32-unknown-unknown
-
-      - name: Cache Cargo dependencies
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/bin/
-            ~/.cargo/registry/index/
-            ~/.cargo/registry/cache/
-            ~/.cargo/git/db/
-            tron/target/
-          key: ${{ runner.os }}-cargo-${{ hashFiles('tron/Cargo.toml') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-
-
-      - name: Install Substreams CLI
-        run: |
-          curl -sSL https://github.com/streamingfast/substreams/releases/latest/download/substreams_linux_x86_64.tar.gz | tar xz
-          sudo mv substreams /usr/local/bin/
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-
-      - name: Install Graph CLI
-        run: npm install -g @graphprotocol/graph-cli
-
-      - name: Build WASM module
-        working-directory: tron
-        run: make build
-
-      - name: Package Substreams
-        working-directory: tron
-        run: make package
-
-      - name: Build Subgraph
-        working-directory: tron
-        run: |
-          echo "Building subgraph..."
-          graph build
-
-      - name: Deploy to Subgraph Studio
-        working-directory: tron
-        env:
-          SUBGRAPH_DEPLOY_KEY: ${{ secrets.SUBGRAPH_DEPLOY_KEY }}
-        run: |
-          echo "Deploying subgraph to The Graph Studio..."
-          
-          # Authenticate with deploy key
-          graph auth --studio "$SUBGRAPH_DEPLOY_KEY"
-          
-          # Get version from Cargo.toml
-          VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
-          
-          # Deploy to studio (follows Request Network naming: request-payments-{network})
-          graph deploy --studio request-payments-tron \
-            --version-label "v${VERSION}" \
-            --skip-validation
-          
-          echo ""
-          echo "=============================================="
-          echo "✅ Subgraph Deployed to The Graph Studio"
-          echo "=============================================="
-          echo ""
-          echo "Subgraph: request-payments-tron"
-          echo "Version: v${VERSION}"
-          echo ""
-          echo "Next steps:"
-          echo "  1. Visit https://thegraph.com/studio/"
-          echo "  2. Verify the subgraph is syncing"
-          echo "  3. When ready, publish to The Graph Network"
           echo "=============================================="

@@ -10,14 +10,14 @@ protogen:
 package: build
 	substreams pack ./substreams.yaml
 
-# Mainnet - uses Streamingfast TRON EVM endpoint
+# Mainnet - uses Streamingfast TRON native endpoint
 .PHONY: gui
 gui: build
-	substreams gui ./substreams.yaml map_erc20_fee_proxy_payments -e mainnet-evm.tron.streamingfast.io:443 --start-block 79216121
+	substreams gui ./substreams.yaml map_erc20_fee_proxy_payments -e mainnet.tron.streamingfast.io:443 --start-block 79216121
 
 .PHONY: run
 run: build
-	substreams run ./substreams.yaml map_erc20_fee_proxy_payments -e mainnet-evm.tron.streamingfast.io:443 --start-block 79216121 --stop-block +100
+	substreams run ./substreams.yaml map_erc20_fee_proxy_payments -e mainnet.tron.streamingfast.io:443 --start-block 79216121 --stop-block +100
 
 .PHONY: clean
 clean:

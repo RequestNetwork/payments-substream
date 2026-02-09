@@ -54,7 +54,7 @@ make run
 
 ### Substreams Endpoint
 
-- **Mainnet (Streamingfast)**: `mainnet-evm.tron.streamingfast.io:443`
+- **Mainnet (Streamingfast)**: `mainnet.tron.streamingfast.io:443`
 
 ### Option 1: SQL Sink (PostgreSQL/ClickHouse)
 
@@ -74,7 +74,7 @@ make run
      "postgres://user:password@host:5432/database?sslmode=disable" \
      ./request-network-tron-v0.1.0.spkg \
      map_erc20_fee_proxy_payments \
-     -e mainnet-evm.tron.streamingfast.io:443
+     -e mainnet.tron.streamingfast.io:443
    ```
 
 ### Option 2: Direct Streaming
@@ -92,7 +92,7 @@ Export data to files for batch processing:
 substreams-sink-files run \
   ./request-network-tron-v0.1.0.spkg \
   map_erc20_fee_proxy_payments \
-  -e mainnet-evm.tron.streamingfast.io:443 \
+  -e mainnet.tron.streamingfast.io:443 \
   --output-path ./output
 ```
 

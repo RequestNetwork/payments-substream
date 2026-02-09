@@ -72,7 +72,7 @@ jobs:
           echo "Build artifacts verified successfully"
 
   integration-test-mainnet:
-    name: Integration Test (Mainnet EVM)
+    name: Integration Test (Mainnet)
     runs-on: ubuntu-latest
     needs: build-and-test
     # Run on: push to main (merge) or manual trigger
@@ -128,13 +128,13 @@ jobs:
           fi
           echo "✅ Package created: $SPKG_FILE"
 
-      - name: Deploy and test against Mainnet EVM (Streamingfast)
+      - name: Deploy and test against Mainnet (Streamingfast)
         working-directory: tron
         env:
           SUBSTREAMS_API_TOKEN: ${{ secrets.SUBSTREAMS_API_TOKEN }}
         run: |
-          echo "=== Deploying to TRON Mainnet EVM (Streamingfast) ==="
-          echo "Endpoint: mainnet-evm.tron.streamingfast.io:443"
+          echo "=== Deploying to TRON Mainnet (Streamingfast) ==="
+          echo "Endpoint: mainnet.tron.streamingfast.io:443"
           echo "Block range: 79216121 to 79216221 (100 blocks from mainnet deployment)"
           echo ""
           
@@ -143,7 +143,7 @@ jobs:
           
           # Run substreams and capture JSON output
           if ! substreams run "$SPKG_FILE" map_erc20_fee_proxy_payments \
-            -e mainnet-evm.tron.streamingfast.io:443 \
+            -e mainnet.tron.streamingfast.io:443 \
             --start-block 79216121 \
             --stop-block +100 \
             -o json 2>&1 | tee output_mainnet.log; then
@@ -179,7 +179,7 @@ jobs:
           echo "=== Mainnet Integration Test PASSED ==="
           echo "The substreams module successfully:"
           echo "  - Loaded WASM module"
-          echo "  - Connected to TRON Mainnet EVM endpoint via Streamingfast"
+          echo "  - Connected to TRON Mainnet endpoint via Streamingfast"
           echo "  - Processed 100 blocks without errors"
           echo "  - Output valid JSON structure"
 

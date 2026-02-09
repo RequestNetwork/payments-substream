@@ -55,7 +55,7 @@ fn map_erc20_fee_proxy_payments(params: String, block: Block) -> Result<Payments
     
     let mut payments = Vec::new();
     let block_number = block.header.as_ref().map(|h| h.number).unwrap_or(0);
-    let block_timestamp = block.header.as_ref().map(|h| h.timestamp).unwrap_or(0) as u64 / 1000; // Convert from ms to seconds
+    let block_timestamp = (block.header.as_ref().map(|h| h.timestamp).unwrap_or(0) / 1000) as u64; // Convert from ms to seconds
 
     for transaction in block.transactions.iter() {
         // TRON tx hashes don't have 0x prefix (unlike Ethereum)
@@ -114,6 +114,7 @@ fn db_out(payments: Payments) -> Result<DatabaseChanges, substreams::errors::Err
         
         database_changes
             .push_change("payments", &key, 0, Operation::Create)
+            .change("id", ("", key.as_str()))
             .change("chain", ("", payment.chain.as_str()))
             .change("tx_hash", ("", payment.tx_hash.as_str()))
             .change("block_number", ("", payment.block.to_string().as_str()))

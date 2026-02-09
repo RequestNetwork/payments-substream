@@ -29,7 +29,7 @@ services:
       postgres:
         condition: service_healthy
     environment:
-      DSN: psql://postgres:${POSTGRES_PASSWORD}@postgres:5432/tron_payments?sslmode=disable
+      DSN: postgres://postgres:${POSTGRES_PASSWORD}@postgres:5432/tron_payments?sslmode=disable
       SUBSTREAMS_API_TOKEN: ${SUBSTREAMS_API_TOKEN}
       SUBSTREAMS_ENDPOINTS_CONFIG_TRON: mainnet.tron.streamingfast.io:443
 

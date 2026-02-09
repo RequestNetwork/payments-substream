@@ -7,8 +7,10 @@ mod pb;
 
 use hex;
 use pb::protocol::transaction_info::Log;
+use pb::protocol::TriggerSmartContract;
 use pb::request::tron::v1::{Payment, Payments};
 use pb::sf::tron::r#type::v1::{Block, Transaction};
+use prost::Message;
 use substreams::log;
 use substreams_database_change::pb::database::{table_change::Operation, DatabaseChanges};
 
@@ -270,13 +272,22 @@ fn parse_uint256_from_data(data: &[u8], offset: usize) -> String {
     }
 }
 
-/// Extracts the owner address from a contract parameter
+/// Extracts the owner address from a contract parameter by decoding the
+/// protobuf Any.value as a TriggerSmartContract message.
 fn extract_owner_address(parameter: &prost_types::Any) -> String {
-    // The owner_address is typically at the beginning of the parameter value
-    if parameter.value.len() >= 21 {
-        base58_encode(&parameter.value[0..21])
-    } else {
-        String::new()
+    match TriggerSmartContract::decode(parameter.value.as_slice()) {
+        Ok(contract) => {
+            if contract.owner_address.is_empty() {
+                log::info!("TriggerSmartContract owner_address is empty");
+                String::new()
+            } else {
+                base58_encode(&contract.owner_address)
+            }
+        }
+        Err(e) => {
+            log::info!("Failed to decode TriggerSmartContract: {}", e);
+            String::new()
+        }
     }
 }
 

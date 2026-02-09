@@ -4,6 +4,9 @@ target/
 # Substreams packages (built during Docker/CI)
 *.spkg
 
+# Substreams replay log
+replay.log
+
 # IDE
 .idea/
 .vscode/

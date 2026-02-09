@@ -1,4 +1,25 @@
-# Substreams SQL Sink for TRON Payments
+# Stage 1: Build the Substreams package from source
+FROM rust:slim AS builder
+
+RUN apt-get update && apt-get install -y \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Substreams CLI
+RUN curl -sSL https://github.com/streamingfast/substreams/releases/latest/download/substreams_linux_x86_64.tar.gz | tar xz -C /usr/local/bin
+
+# Add WASM target
+RUN rustup target add wasm32-unknown-unknown
+
+# Copy source code
+WORKDIR /build/tron
+COPY tron/ .
+
+# Build WASM module and package
+RUN cargo build --target wasm32-unknown-unknown --release && \
+    substreams pack ./substreams.yaml
+
+# Stage 2: Runtime image
 FROM ubuntu:22.04
 
 # Install dependencies
@@ -15,8 +36,8 @@ RUN ARCH=$(echo ${TARGETARCH:-amd64} | sed 's/amd64/x86_64/' | sed 's/arm64/arm6
     rm /tmp/sink.tar.gz && \
     chmod +x /usr/local/bin/substreams-sink-sql
 
-# Copy the substreams package and schema
-COPY tron/request-network-tron-v0.1.0.spkg /app/
+# Copy the built .spkg from builder stage and schema
+COPY --from=builder /build/tron/request-network-tron-v0.1.0.spkg /app/
 COPY tron/schema.sql /app/
 
 WORKDIR /app

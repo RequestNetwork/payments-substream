@@ -16,7 +16,8 @@ CREATE TABLE IF NOT EXISTS payments (
     payment_reference TEXT NOT NULL,
     energy_used TEXT,
     energy_fee TEXT,
-    net_fee TEXT
+    net_fee TEXT,
+    log_index BIGINT NOT NULL DEFAULT 0
 );
 
 -- Indexes for common queries

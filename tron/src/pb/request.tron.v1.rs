@@ -49,6 +49,9 @@ pub struct Payment {
     /// Network/Bandwidth fee paid in SUN
     #[prost(string, tag="15")]
     pub net_fee: ::prost::alloc::string::String,
+    /// Log index within the transaction (for uniqueness when multiple events share the same payment_reference)
+    #[prost(uint64, tag="16")]
+    pub log_index: u64,
 }
 /// Collection of payment events
 #[allow(clippy::derive_partial_eq_without_eq)]

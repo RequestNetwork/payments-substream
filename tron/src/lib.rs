@@ -63,7 +63,7 @@ fn map_erc20_fee_proxy_payments(params: String, block: Block) -> Result<Payments
         
         // Get the transaction info to access logs
         if let Some(info) = &transaction.info {
-            for log_entry in info.log.iter() {
+            for (log_index, log_entry) in info.log.iter().enumerate() {
                 // Check if this log is from our proxy contract
                 let contract_address = base58_encode(&log_entry.address);
                 
@@ -92,6 +92,7 @@ fn map_erc20_fee_proxy_payments(params: String, block: Block) -> Result<Payments
                     block_timestamp,
                     transaction,
                     &chain,
+                    log_index as u64,
                 ) {
                     payments.push(payment);
                 }
@@ -108,8 +109,8 @@ fn db_out(payments: Payments) -> Result<DatabaseChanges, substreams::errors::Err
     let mut database_changes = DatabaseChanges::default();
 
     for payment in payments.payments {
-        // Create unique key from chain + tx_hash + payment_reference
-        let key = format!("{}:{}:{}", payment.chain, payment.tx_hash, payment.payment_reference);
+        // Create unique key from chain + tx_hash + payment_reference + log_index
+        let key = format!("{}:{}:{}:{}", payment.chain, payment.tx_hash, payment.payment_reference, payment.log_index);
         
         database_changes
             .push_change("payments", &key, 0, Operation::Create)
@@ -127,7 +128,8 @@ fn db_out(payments: Payments) -> Result<DatabaseChanges, substreams::errors::Err
             .change("payment_reference", ("", payment.payment_reference.as_str()))
             .change("energy_used", ("", payment.energy_used.as_str()))
             .change("energy_fee", ("", payment.energy_fee.as_str()))
-            .change("net_fee", ("", payment.net_fee.as_str()));
+            .change("net_fee", ("", payment.net_fee.as_str()))
+            .change("log_index", ("", payment.log_index.to_string().as_str()));
     }
 
     Ok(database_changes)
@@ -164,6 +166,7 @@ fn parse_transfer_with_reference_and_fee(
     block_timestamp: u64,
     transaction: &Transaction,
     chain: &str,
+    log_index: u64,
 ) -> Option<Payment> {
     // Event: TransferWithReferenceAndFee(address tokenAddress, address to, uint256 amount, 
     //                                    bytes indexed paymentReference, uint256 feeAmount, address feeAddress)
@@ -226,6 +229,7 @@ fn parse_transfer_with_reference_and_fee(
         energy_used,
         energy_fee,
         net_fee,
+        log_index,
     })
 }
 

@@ -48,6 +48,9 @@ message Payment {
   
   // Network/Bandwidth fee paid in SUN
   string net_fee = 15;
+
+  // Log index within the transaction (for uniqueness when multiple events share the same payment_reference)
+  uint64 log_index = 16;
 }
 
 // Collection of payment events

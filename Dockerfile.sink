@@ -49,7 +49,7 @@ ENV SUBSTREAMS_API_TOKEN=""
 ENV SUBSTREAMS_ENDPOINTS_CONFIG_TRON="mainnet.tron.streamingfast.io:443"
 
 # Create entrypoint script - dynamically find the .spkg file
-RUN printf '#!/bin/bash\nset -e\n\nSPKG=$(ls /app/request-network-tron-*.spkg 2>/dev/null | head -1)\nif [ -z "$SPKG" ]; then\n  echo "ERROR: No .spkg file found in /app/"\n  exit 1\nfi\necho "Using package: $SPKG"\n\n# Setup the database schema first\necho "Setting up database schema..."\nsubstreams-sink-sql setup "$DSN" "$SPKG" || true\n\n# Run the sink\necho "Starting sink..."\nexec substreams-sink-sql run "$DSN" "$SPKG"\n' > /entrypoint.sh && \
+RUN printf '#!/bin/bash\nset -e\n\nSPKG=$(ls /app/request-network-tron-*.spkg 2>/dev/null | head -1)\nif [ -z "$SPKG" ]; then\n  echo "ERROR: No .spkg file found in /app/"\n  exit 1\nfi\necho "Using package: $SPKG"\n\n# Setup the database schema first\necho "Setting up database schema..."\nsubstreams-sink-sql setup "$DSN" "$SPKG" || true\n\n# Run the sink\necho "Starting sink..."\nexec substreams-sink-sql run --on-module-hash-mismatch=warn "$DSN" "$SPKG"\n' > /entrypoint.sh && \
     chmod +x /entrypoint.sh
 
 # Health check

@@ -1,7 +1,7 @@
 specVersion: v0.1.0
 package:
   name: request_network_tron
-  version: v0.1.0
+  version: v0.1.1
   url: https://github.com/RequestNetwork/payments-substream
   doc: |
     Request Network TRON Substreams module for indexing ERC20FeeProxy payment events.

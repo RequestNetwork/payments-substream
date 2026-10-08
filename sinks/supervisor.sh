@@ -484,13 +484,15 @@ done
 # cursor_blocks <index>: prints "<current-hash block> <highest block>" (each "null" when absent)
 # from `tools cursor read`, whose lines read `Module <hash>: Block #<num> (...) [...]`. One row
 # exists per module hash that ever ran in the schema; only the current hash's row is progress.
-# A read that outlasts SINK_CURSOR_READ_TIMEOUT_SECONDS prints "timeout timeout", so one slow or
-# stuck database read never stops the sampler from reporting the other chains.
+# A read that outlasts SINK_CURSOR_READ_TIMEOUT_SECONDS gets TERM, and KILL 5 s later if it is
+# still running; either way it prints "timeout timeout", so one slow or stuck database read never
+# stops the sampler from reporting the other chains.
 cursor_blocks() {
   local out rc=0
-  out=$(SUBSTREAMS_SINK_DSN="${chain_dsns[$1]}" timeout "$SINK_CURSOR_READ_TIMEOUT_SECONDS" \
-    substreams sink postgres tools cursor read 2>/dev/null) || rc=$?
-  if [ "$rc" -eq 124 ]; then
+  out=$(SUBSTREAMS_SINK_DSN="${chain_dsns[$1]}" timeout --kill-after=5 \
+    "$SINK_CURSOR_READ_TIMEOUT_SECONDS" substreams sink postgres tools cursor read 2>/dev/null) || rc=$?
+  # 124: timed out and exited on TERM; 137: still running after the grace period, killed.
+  if [ "$rc" -eq 124 ] || [ "$rc" -eq 137 ]; then
     printf 'timeout timeout\n'
     return
   fi

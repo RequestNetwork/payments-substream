@@ -58,6 +58,7 @@ payments-substream/
 │   ├── entrypoint.sh              # Image entrypoint: allow-listed env, then supervisor.sh
 │   ├── supervisor.sh              # Multi-chain sink supervisor
 │   ├── chains.env                 # Per-chain defaults (endpoint, network, schema, package, token env)
+│   ├── tests/                     # Stub-CLI supervisor tests: `bash sinks/tests/run-tests.sh` (CI: image.yml)
 │   └── local-init.sql             # Creates the per-chain schemas for local docker compose
 ├── docs/
 │   ├── contract.md                # Schema/layout/env contract

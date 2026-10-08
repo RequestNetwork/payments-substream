@@ -1,0 +1,69 @@
+#!/usr/bin/env bash
+# Stub `substreams` CLI for supervisor tests. Behaviour is driven by files in $STUB_DIR.
+set -u
+: "${STUB_DIR:?}"
+schema_of() { # from a --dsn value
+  local dsn=$1
+  printf '%s' "${dsn##*schemaName=}"
+}
+dsn=''; network=''; stop=''
+args=("$@")
+for ((k = 0; k < ${#args[@]}; k++)); do
+  case "${args[$k]}" in
+    --dsn) dsn=${args[$((k + 1))]} ;;
+    --network) network=${args[$((k + 1))]} ;;
+    -t) stop=${args[$((k + 1))]} ;;
+  esac
+done
+# The supervisor passes the DSN through SUBSTREAMS_SINK_DSN, never argv.
+if [ -z "$dsn" ]; then dsn=${SUBSTREAMS_SINK_DSN:-}; fi
+echo "stub: $*" >>"$STUB_DIR/calls.log"
+echo "dsn-env: ${SUBSTREAMS_SINK_DSN:-<unset>}" >>"$STUB_DIR/dsn_env.log"
+
+case "$1" in
+  --version) echo "substreams version 1.24.0 (stub)"; exit 0 ;;
+  info)
+    # Print the shape of the real CLI: a Name: db_out block followed by its Hash: line.
+    [ -n "$network" ] || exit 1
+    [ "$network" = bogus ] && exit 1
+    printf 'Package name: stub\n\nModules:\n----\nName: map_erc20_fee_proxy_payments\nKind: map\nHash: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n\nName: db_out\nInitial block: 1\nKind: map\nInput: map: map_erc20_fee_proxy_payments\nOutput Type: proto:sf.substreams.sink.database.v1.DatabaseChanges\nHash: hash_%s\nDoc:  stub\n\nNetwork: %s\n' "$network" "$network"
+    exit 0 ;;
+  sink)
+    schema=$(schema_of "$dsn")
+    if [ "$3" = setup ]; then
+      f="$STUB_DIR/setup_fail_$schema"
+      if [ -f "$f" ]; then
+        n=$(cat "$f")
+        if [ "$n" -gt 0 ]; then
+          echo $((n - 1)) >"$f"
+          echo "stub setup: failing for $schema ($n left)" >&2
+          exit 3
+        fi
+      fi
+      echo "setup-ok $schema" >>"$STUB_DIR/setup_ok.log"
+      exit 0
+    fi
+    if [ "$3" = tools ]; then
+      if [ -f "$STUB_DIR/cursor_hang_$schema" ]; then sleep 3017; fi
+      if [ -f "$STUB_DIR/cursor_ignore_term_$schema" ]; then trap '' TERM; sleep 3018; fi
+      f="$STUB_DIR/cursor_$schema"
+      [ -f "$f" ] || exit 1
+      cat "$f"
+      exit 0
+    fi
+    # The sink itself.
+    echo "sink-run $schema network=$network stop=$stop" >>"$STUB_DIR/sink_runs.log"
+    if [ -f "$STUB_DIR/sink_exit_$schema" ]; then
+      code=$(cat "$STUB_DIR/sink_exit_$schema")
+      sleep 1
+      exit "$code"
+    fi
+    if [ -n "$stop" ]; then
+      sleep 1
+      exit 0
+    fi
+    trap 'exit 0' TERM
+    while :; do sleep 1; done ;;
+esac
+echo "stub: unknown command $*" >&2
+exit 2

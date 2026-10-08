@@ -78,11 +78,31 @@ jobs:
           echo "$version"
           echo "$version" | grep -q 'version 1\.24\.0 '
 
+  supervisor-tests:
+    name: Supervisor tests (stub CLI)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Lint supervisor, entrypoint and test scripts
+        run: |
+          shellcheck -x sinks/supervisor.sh sinks/tests/run-tests.sh sinks/tests/bin/substreams sinks/tests/bin/timeout
+          shellcheck -s sh sinks/entrypoint.sh
+
+      # Restart and backoff, setup retries, cursor sampling and bounded reads, finished replays,
+      # legacy DSN, duplicate chains and schemas, every override rule, and the DSN never in argv
+      # or logs. Exit status = number of failed checks.
+      - name: Run the stub-CLI harness
+        run: bash sinks/tests/run-tests.sh
+
   publish:
     name: Push sink image
     # Pushes to main and v* tags only; never on pull requests.
     if: github.event_name == 'push'
-    needs: build-smoke
+    needs: [build-smoke, supervisor-tests]
     runs-on: ubuntu-latest
     permissions:
       contents: read

@@ -101,6 +101,9 @@ never trace the DSN or run code. A new variable must be added to that allow-list
 - `SINK_PROGRESS_INTERVAL_SECONDS` default `60`.
 - `SINK_STALL_SECONDS` default `600`: a chain whose cursor block has not advanced for this long
   logs `sink_stalled` on every sampling interval until it advances again.
+- `SINK_CURSOR_READ_TIMEOUT_SECONDS` default `20`: bound on each `tools cursor read`. A read that
+  hits it logs `sink_progress{cursor:"unreadable", block_num:null}` (severity WARNING) for that
+  chain only; the sampler goes on with the other chains, and the stall clock keeps running.
 - Per chain: `SINK_ENDPOINT_<CHAIN>`, `SINK_NETWORK_<CHAIN>`, `SINK_PARAMS_<CHAIN>`,
   `SINK_START_BLOCK_<CHAIN>`, `SINK_STOP_BLOCK_<CHAIN>`, `SINK_SCHEMA_<CHAIN>`,
   `SINK_TOKEN_ENV_<CHAIN>`, `SINK_EXTRA_ARGS_<CHAIN>`.

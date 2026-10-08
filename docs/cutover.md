@@ -291,13 +291,17 @@ imported dump (no VM history to migrate).
 
 **Stage:** use the replay pool with `SINK_START_BLOCK_<CHAIN>` set to a recent block (write the
 exact block number down when you pick it -- it is this chain's fresh starting point, there is no
-existing cursor to resume from). Wait for `sink_finished`, disable the replay pool, add the chain
-to `payments_substream_chains`, then shadow (step 5's pattern, per chain).
+existing cursor to resume from) and `SINK_STOP_BLOCK_<CHAIN>` set to a block near the chain head
+when you open the PR. The supervisor logs `sink_finished` only when a stop block is set; without
+one the replay follows the head forever. Wait for `sink_finished`, disable the replay pool, add the
+chain to `payments_substream_chains` (the live pool resumes from the replay's cursor in the same
+schema), then shadow (step 5's pattern, per chain).
 
 ```hcl
 # HUMAN -- stage replay: a request-infrastructure PR editing environments/stage/variables.tf
 #   payments_replay_enabled = true
-#   payments_replay_env     = { CHAINS = "<chain>", SINK_START_BLOCK_<CHAIN> = "<recent-block>" }
+#   payments_replay_env     = { CHAINS = "<chain>", SINK_START_BLOCK_<CHAIN> = "<recent-block>",
+#                               SINK_STOP_BLOCK_<CHAIN> = "<block near the head>" }
 # merge, `terraform apply`, then deploy-worker-pool (pool: replay) with the published tag.
 ```
 
@@ -313,14 +317,16 @@ stream until the VM sink stops (step 6) -- until then, run EVM chains with
 # HUMAN -- prod replay: a request-infrastructure PR editing environments/prod/variables.tf
 #   payments_replay_enabled = true
 #   payments_replay_env     = { CHAINS = "base", SINK_START_BLOCK_BASE = "10827274",
+#                               SINK_STOP_BLOCK_BASE = "<block near the head>",
 #                               SINK_TOKEN_ENV_BASE = "SUBSTREAMS_API_TOKEN_ALT" }
 # merge, `terraform apply`, then deploy-worker-pool (pool: replay) with the published tag.
 # <CHAIN> in variable names is the chain uppercased, hyphens to underscores (docs/contract.md).
 ```
 
-Then add the chain to `payments_substream_chains` and shadow it, same as TRON step 5. The replay
-pool must be disabled before the live pool lists that chain (request-infrastructure's invariant:
-a chain is listed in exactly one pool at a time).
+After `sink_finished`, add the chain to `payments_substream_chains` and shadow it, same as TRON
+step 5. The replay pool must be disabled before the live pool lists that chain
+(request-infrastructure's invariant: a chain is listed in exactly one pool at a time; its plan
+fails if both pools list the same chain).
 
 ## 9. Rotation
 

@@ -237,6 +237,7 @@ The full contract is in `docs/contract.md`; the supervisor implements it.
 | `SINK_UNDO_BUFFER_SIZE` | `0` | `0` keeps reorg handling in the database. |
 | `SINK_PROGRESS_INTERVAL_SECONDS` | `60` | Cursor sampling interval. |
 | `SINK_STALL_SECONDS` | `600` | No cursor advance for this long logs `sink_stalled`. |
+| `SINK_CURSOR_READ_TIMEOUT_SECONDS` | `20` | Bound on each cursor read; a timed-out chain logs `cursor:"unreadable"`. |
 | `POSTGRES_PASSWORD` | none | PostgreSQL password (local dev compose only) |
 
 Per-chain overrides (`<CHAIN>` = chain name uppercased, hyphens to underscores):

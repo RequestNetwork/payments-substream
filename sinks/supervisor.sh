@@ -100,17 +100,21 @@ SINK_MAX_RETRIES=${SINK_MAX_RETRIES:--1}
 SINK_UNDO_BUFFER_SIZE=${SINK_UNDO_BUFFER_SIZE:-0}
 SINK_PROGRESS_INTERVAL_SECONDS=${SINK_PROGRESS_INTERVAL_SECONDS:-60}
 SINK_STALL_SECONDS=${SINK_STALL_SECONDS:-600}
+SINK_CURSOR_READ_TIMEOUT_SECONDS=${SINK_CURSOR_READ_TIMEOUT_SECONDS:-20}
 
-for name in SINK_MAX_RETRIES SINK_UNDO_BUFFER_SIZE SINK_PROGRESS_INTERVAL_SECONDS SINK_STALL_SECONDS; do
+for name in SINK_MAX_RETRIES SINK_UNDO_BUFFER_SIZE SINK_PROGRESS_INTERVAL_SECONDS SINK_STALL_SECONDS \
+  SINK_CURSOR_READ_TIMEOUT_SECONDS; do
   if ! [[ ${!name} =~ ^-?[0-9]+$ ]]; then
     log ERROR sink_config_invalid chain null field "$name" message "not an integer"
     exit 1
   fi
 done
-if [ "$SINK_PROGRESS_INTERVAL_SECONDS" -lt 1 ]; then
-  log ERROR sink_config_invalid chain null field SINK_PROGRESS_INTERVAL_SECONDS message "must be >= 1"
-  exit 1
-fi
+for name in SINK_PROGRESS_INTERVAL_SECONDS SINK_CURSOR_READ_TIMEOUT_SECONDS; do
+  if [ "${!name}" -lt 1 ]; then
+    log ERROR sink_config_invalid chain null field "$name" message "must be >= 1"
+    exit 1
+  fi
+done
 
 # --- Chain list -------------------------------------------------------------------------------
 
@@ -480,9 +484,17 @@ done
 # cursor_blocks <index>: prints "<current-hash block> <highest block>" (each "null" when absent)
 # from `tools cursor read`, whose lines read `Module <hash>: Block #<num> (...) [...]`. One row
 # exists per module hash that ever ran in the schema; only the current hash's row is progress.
+# A read that outlasts SINK_CURSOR_READ_TIMEOUT_SECONDS prints "timeout timeout", so one slow or
+# stuck database read never stops the sampler from reporting the other chains.
 cursor_blocks() {
-  local out
-  out=$(SUBSTREAMS_SINK_DSN="${chain_dsns[$1]}" substreams sink postgres tools cursor read 2>/dev/null) || out=''
+  local out rc=0
+  out=$(SUBSTREAMS_SINK_DSN="${chain_dsns[$1]}" timeout "$SINK_CURSOR_READ_TIMEOUT_SECONDS" \
+    substreams sink postgres tools cursor read 2>/dev/null) || rc=$?
+  if [ "$rc" -eq 124 ]; then
+    printf 'timeout timeout\n'
+    return
+  fi
+  [ "$rc" -eq 0 ] || out=''
   printf '%s\n' "$out" | awk -v hash="${chain_hashes[$1]}" '
     /^Module [^:]+: Block #?[0-9]+/ {
       module = $2; sub(/:$/, "", module)
@@ -515,11 +527,17 @@ while true; do
     read -r block highest <<<"$(cursor_blocks "$i")"
     if [ -e "$state_dir/$i.finished" ]; then
       # Replay done (stop block reached): the sampler keeps reporting it, never as stalled.
+      [ "$block" != timeout ] || block=null
       log INFO sink_progress chain "$chain" block_num "$block" cursor current status finished
       continue
     fi
     running=$((running + 1))
-    if [ "$block" != null ]; then
+    if [ "$block" = timeout ]; then
+      # Not a sample: keep the previous one and let the stall clock run.
+      log WARNING sink_progress chain "$chain" block_num null cursor unreadable \
+        timeout_seconds "$SINK_CURSOR_READ_TIMEOUT_SECONDS"
+      block=null
+    elif [ "$block" != null ]; then
       log INFO sink_progress chain "$chain" block_num "$block" cursor current
       if [ "${prev_block[i]}" != null ] && [ "$block" -gt "${prev_block[i]}" ]; then
         log INFO sink_progress_advanced chain "$chain" block_num "$block" \

@@ -6,12 +6,16 @@ on:
       - main
     paths:
       - 'tron/**'
+      - 'schema.sql'
+      - 'sinks/**'
       - '.github/workflows/tron-build.yml'
   push:
     branches:
       - main
     paths:
       - 'tron/**'
+      - 'schema.sql'
+      - 'sinks/**'
       - '.github/workflows/tron-build.yml'
   workflow_dispatch:
     inputs:
@@ -38,7 +42,9 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
+          toolchain: 1.93.0
           targets: wasm32-unknown-unknown
+          components: clippy
 
       - name: Cache Cargo dependencies
         uses: actions/cache@v4
@@ -61,6 +67,10 @@ jobs:
         working-directory: tron
         run: make test
 
+      - name: Clippy
+        working-directory: tron
+        run: make clippy
+
       - name: Verify build artifacts
         working-directory: tron
         run: |
@@ -70,6 +80,112 @@ jobs:
             exit 1
           fi
           echo "Build artifacts verified successfully"
+
+  schema-check:
+    name: Schema Check
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: payments
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Install PostgreSQL client
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Check tron/schema.sql matches schema.sql
+        run: diff -q schema.sql tron/schema.sql
+
+      - name: Create the legacy 17-column table with one row (pre-gas-columns shape)
+        env:
+          PGPASSWORD: postgres
+        run: |
+          psql -v ON_ERROR_STOP=1 -h localhost -U postgres -d payments <<'SQL'
+          CREATE TABLE payments (
+              id TEXT PRIMARY KEY,
+              chain TEXT NOT NULL,
+              tx_hash TEXT NOT NULL,
+              block_number BIGINT NOT NULL,
+              timestamp BIGINT NOT NULL,
+              contract_address TEXT NOT NULL,
+              token_address TEXT NOT NULL,
+              from_address TEXT NOT NULL,
+              to_address TEXT NOT NULL,
+              amount NUMERIC NOT NULL,
+              fee_amount NUMERIC NOT NULL,
+              fee_address TEXT NOT NULL,
+              payment_reference TEXT NOT NULL,
+              energy_used TEXT,
+              energy_fee TEXT,
+              net_fee TEXT,
+              log_index BIGINT NOT NULL DEFAULT 0
+          );
+          INSERT INTO payments (id, chain, tx_hash, block_number, timestamp, contract_address, token_address, from_address, to_address, amount, fee_amount, fee_address, payment_reference, log_index)
+          VALUES ('legacy:1', 'tron', 'legacytx', 1, 1, 'Tcontract', 'Ttoken', 'Tfrom', 'Tto', 42, 1, 'Tfee', '0xlegacyref', 0);
+          SQL
+
+      - name: Apply schema.sql (first time)
+        env:
+          PGPASSWORD: postgres
+        run: psql -v ON_ERROR_STOP=1 -h localhost -U postgres -d payments -f schema.sql
+
+      - name: Apply schema.sql again (idempotency)
+        env:
+          PGPASSWORD: postgres
+        run: psql -v ON_ERROR_STOP=1 -h localhost -U postgres -d payments -f schema.sql
+
+      - name: Assert gas columns were added to the legacy table and its row survived
+        env:
+          PGPASSWORD: postgres
+        run: |
+          GAS_COLS=$(psql -tA -h localhost -U postgres -d payments -c \
+            "SELECT count(*) FROM information_schema.columns WHERE table_name = 'payments' AND column_name IN ('gas_used', 'gas_price')")
+          if [ "$GAS_COLS" != "2" ]; then
+            echo "ERROR: expected gas_used and gas_price on the pre-existing table, found $GAS_COLS of 2"
+            exit 1
+          fi
+          LEGACY=$(psql -tA -h localhost -U postgres -d payments -c \
+            "SELECT amount, payment_reference FROM payments WHERE id = 'legacy:1'")
+          if [ "$LEGACY" != "42|0xlegacyref" ]; then
+            echo "ERROR: legacy row did not survive schema.sql, got [$LEGACY]"
+            exit 1
+          fi
+          echo "Legacy table upgraded: both gas columns present, legacy row intact"
+
+      - name: Upsert probe (operation 4 == ON CONFLICT DO UPDATE)
+        env:
+          PGPASSWORD: postgres
+        run: |
+          psql -v ON_ERROR_STOP=1 -h localhost -U postgres -d payments <<'SQL'
+          INSERT INTO payments (id, chain, tx_hash, block_number, timestamp, contract_address, token_address, from_address, to_address, amount, fee_amount, fee_address, payment_reference, log_index)
+          VALUES ('probe:1', 'probe', '0xprobetx', 1, 1, '0xcontract', '0xtoken', '0xfrom', '0xto', 1, 1, '0xfeeaddr', '0xref', 0)
+          ON CONFLICT (id) DO UPDATE SET amount = EXCLUDED.amount;
+          SQL
+
+          psql -v ON_ERROR_STOP=1 -h localhost -U postgres -d payments <<'SQL'
+          INSERT INTO payments (id, chain, tx_hash, block_number, timestamp, contract_address, token_address, from_address, to_address, amount, fee_amount, fee_address, payment_reference, log_index)
+          VALUES ('probe:1', 'probe', '0xprobetx', 1, 1, '0xcontract', '0xtoken', '0xfrom', '0xto', 100, 1, '0xfeeaddr', '0xref', 0)
+          ON CONFLICT (id) DO UPDATE SET amount = EXCLUDED.amount;
+          SQL
+
+          ROW_COUNT=$(psql -tA -h localhost -U postgres -d payments -c "SELECT count(*) FROM payments WHERE id = 'probe:1'")
+          AMOUNT=$(psql -tA -h localhost -U postgres -d payments -c "SELECT amount FROM payments WHERE id = 'probe:1'")
+          if [ "$ROW_COUNT" != "1" ] || [ "$AMOUNT" != "100" ]; then
+            echo "ERROR: expected exactly one row with amount 100, got count=$ROW_COUNT amount=$AMOUNT"
+            exit 1
+          fi
+          echo "Upsert probe passed: one row, amount=$AMOUNT"
 
   integration-test-mainnet:
     name: Integration Test (Mainnet)
@@ -81,14 +197,30 @@ jobs:
       github.event.inputs.run_integration_tests == 'true' ||
       github.event.inputs.publish_package == 'true' ||
       (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: payments
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
 
     steps:
+      - name: Install PostgreSQL client
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client
       - name: Checkout repository
         uses: actions/checkout@v4
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
+          toolchain: 1.93.0
           targets: wasm32-unknown-unknown
 
       - name: Cache Cargo dependencies
@@ -106,7 +238,9 @@ jobs:
 
       - name: Install Substreams CLI
         run: |
-          curl -sSL https://github.com/streamingfast/substreams/releases/latest/download/substreams_linux_x86_64.tar.gz | tar xz
+          curl -sSL -o substreams.tar.gz https://github.com/streamingfast/substreams/releases/download/v1.24.0/substreams_linux_x86_64.tar.gz
+          echo "8ed58a785c00657fb71c7bc390b781357cd13e415497e4b4f016a9e315d751a6  substreams.tar.gz" | sha256sum -c -
+          tar xzf substreams.tar.gz
           sudo mv substreams /usr/local/bin/
           substreams --version
 
@@ -137,10 +271,10 @@ jobs:
           echo "Endpoint: mainnet.tron.streamingfast.io:443"
           echo "Block range: 79216121 to 79216221 (100 blocks from mainnet deployment)"
           echo ""
-          
+
           SPKG_FILE=$(ls -1 *.spkg | head -1)
           echo "Using package: $SPKG_FILE"
-          
+
           # Run substreams and capture JSON output
           if ! substreams run "$SPKG_FILE" map_erc20_fee_proxy_payments \
             -e mainnet.tron.streamingfast.io:443 \
@@ -153,14 +287,14 @@ jobs:
             cat output_mainnet.log
             exit 1
           fi
-          
+
           echo ""
           echo "=== Validating Results ==="
-          
+
           # If any payments were found, validate the structure
           if grep -q '"payments"' output_mainnet.log; then
             echo "✅ Payments data structure detected in output"
-            
+
             # Extract and validate payment fields if present
             if grep -q '"token_address"' output_mainnet.log; then
               echo "✅ Payment fields present: token_address"
@@ -174,7 +308,7 @@ jobs:
           else
             echo "ℹ️  No payments found in block range (expected if no transactions in these blocks)"
           fi
-          
+
           echo ""
           echo "=== Mainnet Integration Test PASSED ==="
           echo "The substreams module successfully:"
@@ -182,6 +316,94 @@ jobs:
           echo "  - Connected to TRON Mainnet endpoint via Streamingfast"
           echo "  - Processed 100 blocks without errors"
           echo "  - Output valid JSON structure"
+
+      - name: Sink postgres setup (schema + cursors/history bookkeeping)
+        working-directory: tron
+        run: |
+          SPKG_FILE=$(ls -1 *.spkg | head -1)
+          # The sink's setup does not create the Postgres schema itself
+          # ("no schema has been selected to create in"); in GCP the schemas are
+          # created by request-infrastructure scripts/setup-payments-db.sql.
+          psql 'postgres://postgres:postgres@localhost:5432/payments?sslmode=disable' \
+            -v ON_ERROR_STOP=1 -c 'CREATE SCHEMA IF NOT EXISTS tron'
+          substreams sink postgres setup "./substreams.yaml" \
+            --dsn 'postgres://postgres:postgres@localhost:5432/payments?sslmode=disable&schemaName=tron'
+
+      - name: Sink a known mainnet transaction into Postgres
+        working-directory: tron
+        env:
+          SUBSTREAMS_API_TOKEN: ${{ secrets.SUBSTREAMS_API_TOKEN }}
+        run: |
+          SPKG_FILE=$(ls -1 *.spkg | head -1)
+          # -t is exclusive (confirmed via `substreams sink postgres --help`), so 79216760
+          # includes block 79216759.
+          substreams sink postgres "$SPKG_FILE" \
+            --dsn 'postgres://postgres:postgres@localhost:5432/payments?sslmode=disable&schemaName=tron' \
+            -e mainnet.tron.streamingfast.io:443 \
+            -s 79216759 \
+            -t 79216760
+
+      - name: Assert the sunk row matches the known-good fixture
+        env:
+          PGPASSWORD: postgres
+        run: |
+          # psql rejects the schemaName URI option: connect without it and qualify tron.payments.
+          ROW=$(psql -tA -h localhost -U postgres -d payments -c \
+            "SELECT amount, fee_amount, payment_reference, block_number FROM tron.payments WHERE tx_hash = 'd73764e99b733ae477c62a90f0f212ba4145eadb052897b3e7df5c4165a41d76'")
+          echo "row: $ROW"
+          EXPECTED="100|1|0x09989861b2cefbcb4fc55baee11428773c20c290117ac96116d1ae2e652d9bc4|79216759"
+          if [ "$ROW" != "$EXPECTED" ]; then
+            echo "ERROR: expected [$EXPECTED], got [$ROW]"
+            exit 1
+          fi
+
+      - name: Delete the cursor, tamper the row, and re-run the same range
+        working-directory: tron
+        env:
+          PGPASSWORD: postgres
+          SUBSTREAMS_API_TOKEN: ${{ secrets.SUBSTREAMS_API_TOKEN }}
+        run: |
+          # psql rejects the schemaName URI option: connect without it and qualify tron.* tables.
+          DELETED=$(psql -v ON_ERROR_STOP=1 -tA -h localhost -U postgres -d payments -c \
+            "WITH d AS (DELETE FROM tron.cursors RETURNING 1) SELECT count(*) FROM d")
+          if [ "$DELETED" != "1" ]; then
+            echo "ERROR: expected to delete exactly 1 cursor row, deleted [$DELETED]"
+            exit 1
+          fi
+
+          # Zero the amount so only an ON CONFLICT DO UPDATE re-write of the reprocessed block can
+          # restore it (a skipped rerun leaves 0; a plain INSERT fails on the PK).
+          UPDATED=$(psql -v ON_ERROR_STOP=1 -tA -h localhost -U postgres -d payments -c \
+            "WITH u AS (UPDATE tron.payments SET amount = 0 WHERE tx_hash = 'd73764e99b733ae477c62a90f0f212ba4145eadb052897b3e7df5c4165a41d76' RETURNING 1) SELECT count(*) FROM u")
+          if [ "$UPDATED" != "1" ]; then
+            echo "ERROR: expected to zero exactly 1 payment row, updated [$UPDATED]"
+            exit 1
+          fi
+
+          SPKG_FILE=$(ls -1 *.spkg | head -1)
+          substreams sink postgres "$SPKG_FILE" \
+            --dsn 'postgres://postgres:postgres@localhost:5432/payments?sslmode=disable&schemaName=tron' \
+            -e mainnet.tron.streamingfast.io:443 \
+            -s 79216759 \
+            -t 79216760
+
+      - name: Assert the replay re-wrote the row in place (proves OPERATION_UPSERT reached the sink)
+        env:
+          PGPASSWORD: postgres
+        run: |
+          RESULT=$(psql -v ON_ERROR_STOP=1 -tA -h localhost -U postgres -d payments -c \
+            "SELECT count(*), max(amount) FROM tron.payments WHERE tx_hash = 'd73764e99b733ae477c62a90f0f212ba4145eadb052897b3e7df5c4165a41d76'")
+          if [ "$RESULT" != "1|100" ]; then
+            echo "ERROR: expected exactly 1 row with amount restored to 100 (a skipped rerun leaves amount 0; a plain INSERT would fail on the PK), got [count|amount] = [$RESULT]"
+            exit 1
+          fi
+          CURSORS=$(psql -v ON_ERROR_STOP=1 -tA -h localhost -U postgres -d payments -c \
+            "SELECT count(*) FROM tron.cursors")
+          if [ "$CURSORS" -lt 1 ]; then
+            echo "ERROR: expected the rerun to write a cursor row again, found $CURSORS"
+            exit 1
+          fi
+          echo "✅ Replay proof passed: one row, amount restored to 100, cursor rewritten"
 
   # Publish package artifact for download/deployment
   publish-package:
@@ -200,6 +422,7 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
+          toolchain: 1.93.0
           targets: wasm32-unknown-unknown
 
       - name: Cache Cargo dependencies
@@ -217,7 +440,9 @@ jobs:
 
       - name: Install Substreams CLI
         run: |
-          curl -sSL https://github.com/streamingfast/substreams/releases/latest/download/substreams_linux_x86_64.tar.gz | tar xz
+          curl -sSL -o substreams.tar.gz https://github.com/streamingfast/substreams/releases/download/v1.24.0/substreams_linux_x86_64.tar.gz
+          echo "8ed58a785c00657fb71c7bc390b781357cd13e415497e4b4f016a9e315d751a6  substreams.tar.gz" | sha256sum -c -
+          tar xzf substreams.tar.gz
           sudo mv substreams /usr/local/bin/
 
       - name: Build WASM module
@@ -238,10 +463,10 @@ jobs:
             exit 1
           fi
           echo "spkg_file=$SPKG_FILE" >> $GITHUB_OUTPUT
-          
+
           VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
           echo "version=$VERSION" >> $GITHUB_OUTPUT
-          
+
           echo "Package created successfully: $SPKG_FILE (version: $VERSION)"
 
       - name: Upload package artifact

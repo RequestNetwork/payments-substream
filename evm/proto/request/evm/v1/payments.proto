@@ -1,0 +1,56 @@
+syntax = "proto3";
+
+package request.evm.v1;
+
+// A single TransferWithReferenceAndFee event from an ERC20FeeProxy contract
+message Payment {
+  // The ERC20 token contract address (lowercase 0x)
+  string token_address = 1;
+
+  // The recipient address (lowercase 0x)
+  string to = 2;
+
+  // The payment amount (decimal string to preserve precision)
+  string amount = 3;
+
+  // The indexed payment reference: 0x + hex of topics[1]
+  string payment_reference = 4;
+
+  // The fee amount (decimal string to preserve precision)
+  string fee_amount = 5;
+
+  // The fee recipient address (lowercase 0x)
+  string fee_address = 6;
+
+  // The transaction sender (lowercase 0x)
+  string from = 7;
+
+  // Block number where the event was emitted
+  uint64 block = 8;
+
+  // Block timestamp (Unix timestamp in seconds)
+  uint64 timestamp = 9;
+
+  // Transaction hash (lowercase 0x)
+  string tx_hash = 10;
+
+  // The proxy contract address that emitted the event (lowercase 0x)
+  string contract_address = 11;
+
+  // request-api chain identifier (e.g. "mainnet", "matic", "sepolia")
+  string chain = 12;
+
+  // Gas used by the transaction (decimal string)
+  string gas_used = 13;
+
+  // Gas price of the transaction in wei (decimal string)
+  string gas_price = 14;
+
+  // Index of the log within the transaction receipt
+  uint64 log_index = 15;
+}
+
+// Collection of payment events
+message Payments {
+  repeated Payment payments = 1;
+}

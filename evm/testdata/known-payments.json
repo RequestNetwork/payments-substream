@@ -1,0 +1,31 @@
+{
+  "comment": "Real TransferWithReferenceAndFee payments used by the evm-build.yml integration job. Each was verified on 2026-10-07 against public JSON-RPC nodes (eth_getLogs filtered on the proxy address + topic0 0x9f16cbcc523c67a60c450e5ffe4f3b7b6dbe772e7abcadb2686ce029a9a0a2b6, then eth_getTransactionReceipt: status 0x1). sepolia via ethereum-sepolia.publicnode.com; base via mainnet.base.org and 1rpc.io/base (both agreed). log_index is the event's position within the transaction receipt's logs (sepolia: block-level logIndex 54, receipt position 1; base: block-level logIndex 445, receipt position 5). source_url is the explorer page for the same transaction, given for humans; it was not itself fetched.",
+  "payments": [
+    {
+      "chain": "sepolia",
+      "network": "sepolia",
+      "endpoint": "sepolia.eth.streamingfast.io:443",
+      "block": 11861545,
+      "tx_hash": "0x8837eed31f778edd33f9c35682db2857fde4438cde4302b8267a5081063ab992",
+      "log_index": 1,
+      "payment_reference": "0x2b48d257af6a1014bafae1d1cf3dbe39b62b65715a6c0863770005e839c9e797",
+      "amount": "10000",
+      "to_address": "0x325d3e74a054e38b8b45a18e0d45db793657d3a9",
+      "contract_address": "0x399f5ee127ce7432e4921a61b8cf52b0af52cbfe",
+      "source_url": "https://sepolia.etherscan.io/tx/0x8837eed31f778edd33f9c35682db2857fde4438cde4302b8267a5081063ab992"
+    },
+    {
+      "chain": "base",
+      "network": "base",
+      "endpoint": "base-mainnet.streamingfast.io:443",
+      "block": 52299449,
+      "tx_hash": "0xb667f23a01048da4750882f7269a6ddd7969eee0cb3bbc60c7511dc00fbc74f8",
+      "log_index": 5,
+      "payment_reference": "0xf5003b1e452de0757fc23ce4692edca031ceabfec70c74a35bbec5960344b409",
+      "amount": "3000000",
+      "to_address": "0x737fab8c12567a30de619024788cf53bd284c815",
+      "contract_address": "0x1892196e80c4c17ea5100da765ab48c1fe2fb814",
+      "source_url": "https://basescan.org/tx/0xb667f23a01048da4750882f7269a6ddd7969eee0cb3bbc60c7511dc00fbc74f8"
+    }
+  ]
+}

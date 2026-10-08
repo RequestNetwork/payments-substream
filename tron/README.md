@@ -56,25 +56,34 @@ make run
 
 - **Mainnet (Streamingfast)**: `mainnet.tron.streamingfast.io:443`
 
-### Option 1: SQL Sink (PostgreSQL/ClickHouse)
+### Option 1: SQL Sink (PostgreSQL)
 
-1. Install the SQL sink:
-   ```bash
-   go install github.com/streamingfast/substreams-sink-sql/cmd/substreams-sink-sql@latest
-   ```
+> `substreams-sink-sql` is archived; this package ships a `sink.config` of type
+> `sf.substreams.sink.sql.v1.Service`, consumed with the `substreams sink postgres` subcommand.
 
-2. Build and package:
+1. Build and package:
    ```bash
    make package
    ```
 
+2. Create the Postgres schema (`setup` does not create it: it fails with
+   `no schema has been selected to create in`; in GCP request-infrastructure's
+   `scripts/setup-payments-db.sql` creates all chain schemas), then set up the tables,
+   indexes and the sink's cursor bookkeeping:
+   ```bash
+   psql "postgres://<user>:<password>@<host>:5432/<database>?sslmode=disable" \
+     -c 'CREATE SCHEMA IF NOT EXISTS tron'
+
+   substreams sink postgres setup ./substreams.yaml \
+     --dsn "postgres://<user>:<password>@<host>:5432/<database>?sslmode=disable&schemaName=tron"
+   ```
+
 3. Run the sink:
    ```bash
-   substreams-sink-sql run \
-     "postgres://user:password@host:5432/database?sslmode=disable" \
-     ./request-network-tron-v0.1.0.spkg \
-     map_erc20_fee_proxy_payments \
-     -e mainnet.tron.streamingfast.io:443
+   substreams sink postgres ./substreams.yaml \
+     --dsn "postgres://<user>:<password>@<host>:5432/<database>?sslmode=disable&schemaName=tron" \
+     -e mainnet.tron.streamingfast.io:443 \
+     --on-module-hash-mismatch=warn
    ```
 
 ### Option 2: Direct Streaming

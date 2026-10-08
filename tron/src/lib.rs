@@ -3,9 +3,16 @@
 //! This module indexes TransferWithReferenceAndFee events from the ERC20FeeProxy
 //! contract deployed on TRON mainnet.
 
+// The #[substreams::handlers::map] macro expands each handler into an extern "C" wrapper that
+// takes raw pointers; clippy flags that generated signature and attributes the span back to the
+// handler fn, where a local #[allow] on the fn itself is consumed by the macro before clippy
+// sees the expansion. Allow crate-wide instead.
+#![allow(clippy::not_unsafe_ptr_arg_deref)]
+
+// Generated/vendored protobuf bindings: allow the lints that fire on boilerplate we don't hand-write.
+#[allow(dead_code, clippy::enum_variant_names)]
 mod pb;
 
-use hex;
 use pb::protocol::transaction_info::Log;
 use pb::protocol::TriggerSmartContract;
 use pb::request::tron::v1::{Payment, Payments};
@@ -103,16 +110,24 @@ fn map_erc20_fee_proxy_payments(params: String, block: Block) -> Result<Payments
     Ok(Payments { payments })
 }
 
-/// Converts Payments to DatabaseChanges for SQL sink
-#[substreams::handlers::map]
-fn db_out(payments: Payments) -> Result<DatabaseChanges, substreams::errors::Error> {
+/// sf.substreams.sink.database.v1 OPERATION_UPSERT. The crate's `Operation` enum (1.3.1) only
+/// defines Unspecified/Create/Update/Delete, but `TableChange.operation` is a plain `i32` field,
+/// and substreams-sink-postgres switches on the decoded wire value: 4 renders
+/// `INSERT ... ON CONFLICT (pk) DO UPDATE`, while `Operation::Create` renders a plain `INSERT`
+/// that fails on replay once the row already exists.
+const OPERATION_UPSERT: i32 = 4;
+
+/// Builds the DatabaseChanges for a batch of payments. Factored out of the `db_out` handler
+/// below so it is unit-testable (the `#[substreams::handlers::map]` macro wraps the handler
+/// itself, which substreams-test cannot invoke directly).
+pub fn build_database_changes(payments: &Payments) -> DatabaseChanges {
     let mut database_changes = DatabaseChanges::default();
 
-    for payment in payments.payments {
+    for payment in &payments.payments {
         // Create unique key from chain + tx_hash + payment_reference + log_index
         let key = format!("{}:{}:{}:{}", payment.chain, payment.tx_hash, payment.payment_reference, payment.log_index);
-        
-        database_changes
+
+        let table_change = database_changes
             .push_change("payments", &key, 0, Operation::Create)
             .change("id", ("", key.as_str()))
             .change("chain", ("", payment.chain.as_str()))
@@ -131,9 +146,19 @@ fn db_out(payments: Payments) -> Result<DatabaseChanges, substreams::errors::Err
             .change("energy_fee", ("", payment.energy_fee.as_str()))
             .change("net_fee", ("", payment.net_fee.as_str()))
             .change("log_index", ("", payment.log_index.to_string().as_str()));
+
+        // Set the i32 field directly (no transmute): push_change only accepts the crate's
+        // Operation enum, which has no Upsert variant.
+        table_change.operation = OPERATION_UPSERT;
     }
 
-    Ok(database_changes)
+    database_changes
+}
+
+/// Converts Payments to DatabaseChanges for SQL sink
+#[substreams::handlers::map]
+fn db_out(payments: Payments) -> Result<DatabaseChanges, substreams::errors::Error> {
+    Ok(build_database_changes(&payments))
 }
 
 
@@ -159,6 +184,7 @@ fn extract_resource_info(transaction: &Transaction) -> (String, String, String) 
 }
 
 /// Parses a TransferWithReferenceAndFee event from a log entry
+#[allow(clippy::too_many_arguments)]
 fn parse_transfer_with_reference_and_fee(
     log_entry: &Log,
     contract_address: &str,
@@ -208,7 +234,7 @@ fn parse_transfer_with_reference_and_fee(
         .contracts
         .first()
         .and_then(|c| c.parameter.as_ref())
-        .map(|p| extract_owner_address(p))
+        .map(extract_owner_address)
         .unwrap_or_default();
 
     // Extract TRON resource information (energy and bandwidth)
@@ -297,6 +323,7 @@ fn extract_owner_address(parameter: &prost_types::Any) -> String {
 }
 
 /// Encodes bytes to TRON Base58Check address format
+#[allow(clippy::if_same_then_else)]
 fn base58_encode(bytes: &[u8]) -> String {
     // TRON addresses use Base58Check encoding with 0x41 prefix for mainnet
     // This is a simplified version - in production, use a proper Base58Check implementation
@@ -315,6 +342,88 @@ fn base58_encode(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn sample_payment(tx_hash: &str, log_index: u64) -> Payment {
+        Payment {
+            token_address: "TTokenAddress".to_string(),
+            to: "TToAddress".to_string(),
+            amount: "100".to_string(),
+            payment_reference: "0xabc123".to_string(),
+            fee_amount: "1".to_string(),
+            fee_address: "TFeeAddress".to_string(),
+            from: "TFromAddress".to_string(),
+            block: 79216121,
+            timestamp: 1_700_000_000,
+            tx_hash: tx_hash.to_string(),
+            contract_address: "TProxyAddress".to_string(),
+            chain: "tron".to_string(),
+            energy_used: "1000".to_string(),
+            energy_fee: "100".to_string(),
+            net_fee: "10".to_string(),
+            log_index,
+        }
+    }
+
+    #[test]
+    fn test_build_database_changes_sets_operation_upsert() {
+        let payments = Payments {
+            payments: vec![sample_payment("deadbeef", 0)],
+        };
+
+        let changes = build_database_changes(&payments);
+
+        assert_eq!(changes.table_changes.len(), 1);
+        assert_eq!(changes.table_changes[0].operation, OPERATION_UPSERT);
+        assert_eq!(changes.table_changes[0].operation, 4);
+    }
+
+    #[test]
+    fn test_build_database_changes_key_keeps_payment_reference_segment() {
+        let payments = Payments {
+            payments: vec![sample_payment("deadbeef", 0)],
+        };
+
+        let changes = build_database_changes(&payments);
+
+        let pk = match &changes.table_changes[0].primary_key {
+            Some(substreams_database_change::pb::database::table_change::PrimaryKey::Pk(pk)) => {
+                pk.clone()
+            }
+            _ => panic!("expected a single primary key"),
+        };
+        assert_eq!(pk, "tron:deadbeef:0xabc123:0");
+
+        let fields = &changes.table_changes[0].fields;
+        assert_eq!(fields.len(), 17);
+        assert!(
+            !fields.iter().any(|f| f.name == "gas_used" || f.name == "gas_price"),
+            "TRON rows must not set EVM-only gas fields"
+        );
+    }
+
+    #[test]
+    fn test_build_database_changes_two_log_indexes_produce_distinct_keys() {
+        let payments = Payments {
+            payments: vec![sample_payment("deadbeef", 0), sample_payment("deadbeef", 1)],
+        };
+
+        let changes = build_database_changes(&payments);
+
+        assert_eq!(changes.table_changes.len(), 2);
+        let keys: Vec<String> = changes
+            .table_changes
+            .iter()
+            .map(|tc| match &tc.primary_key {
+                Some(substreams_database_change::pb::database::table_change::PrimaryKey::Pk(pk)) => {
+                    pk.clone()
+                }
+                _ => panic!("expected a single primary key"),
+            })
+            .collect();
+        assert_ne!(keys[0], keys[1]);
+        assert_eq!(keys[0], "tron:deadbeef:0xabc123:0");
+        assert_eq!(keys[1], "tron:deadbeef:0xabc123:1");
+    }
 
     #[test]
     fn test_base58_encode() {

@@ -1,5 +1,12 @@
-# Production Docker Compose for Easypanel
+# Production Docker Compose for Easypanel (legacy VM TRON sink)
 # Uses Easypanel's built-in PostgreSQL service for cross-app database access
+#
+# FROZEN: this VM service is retired at the REQ-390 cutover (docs/cutover.md) and must not be
+# rebuilt by CI -- deploy-to-staging.yml / deploy-to-production.yml no longer run on push or
+# release. The sink now runs as a GCP Cloud Run worker pool (README "Deployment").
+# A manual rebuild keeps the VM layout: with only the legacy DSN set, the supervisor runs exactly
+# one TRON sink in schema `public` (SUBSTREAMS_SINK_DSN is the GCP layout, one schema per chain,
+# and refuses a `public` schema override).
 
 services:
   sink:

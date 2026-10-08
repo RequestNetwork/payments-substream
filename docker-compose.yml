@@ -1,15 +1,19 @@
 services:
   # PostgreSQL Database
   postgres:
-    image: postgres:15-alpine
-    container_name: tron-payments-db
+    image: postgres:17-alpine
+    container_name: payments-db
     restart: unless-stopped
     environment:
-      POSTGRES_DB: tron_payments
+      POSTGRES_DB: payments
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      # Renamed from postgres_data (created by postgres:15) so postgres:17 starts on a fresh
+      # volume instead of refusing the old data directory. The old one can be removed by hand.
+      - payments_pg17_data:/var/lib/postgresql/data
+      # Creates the per-chain schemas on a fresh volume (`sink postgres setup` needs them)
+      - ./sinks/local-init.sql:/docker-entrypoint-initdb.d/10-schemas.sql:ro
     ports:
       - "${POSTGRES_PORT:-5432}:5432"
     healthcheck:
@@ -18,20 +22,20 @@ services:
       timeout: 5s
       retries: 5
 
-  # Substreams SQL Sink
+  # Substreams Postgres sink supervisor (one sink per chain in CHAINS)
   sink:
     build:
       context: .
       dockerfile: Dockerfile.sink
-    container_name: tron-payments-sink
+    container_name: payments-sink
     restart: unless-stopped
     depends_on:
       postgres:
         condition: service_healthy
     environment:
-      DSN: postgres://postgres:${POSTGRES_PASSWORD}@postgres:5432/tron_payments?sslmode=disable
+      CHAINS: ${CHAINS:-tron}
+      SUBSTREAMS_SINK_DSN: postgres://postgres:${POSTGRES_PASSWORD}@postgres:5432/payments?sslmode=disable
       SUBSTREAMS_API_TOKEN: ${SUBSTREAMS_API_TOKEN}
-      SUBSTREAMS_ENDPOINTS_CONFIG_TRON: mainnet.tron.streamingfast.io:443
 
 volumes:
-  postgres_data:
+  payments_pg17_data:

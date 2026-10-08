@@ -1,0 +1,109 @@
+specVersion: v0.1.0
+package:
+  name: request_network_evm
+  version: v0.1.0
+  url: https://github.com/RequestNetwork/payments-substream
+  doc: |
+    Request Network EVM Substreams module for indexing ERC20FeeProxy payment events.
+    Indexes TransferWithReferenceAndFee events from the deployed ERC20FeeProxy contracts.
+    One package serves every EVM chain: select the chain at run time with --network, which
+    applies that network's initialBlock and params from the `networks:` section below.
+
+imports:
+  eth: https://spkg.io/streamingfast/ethereum-common-v0.3.0.spkg
+  sql: https://github.com/streamingfast/substreams-sink-sql/releases/download/protodefs-v1.0.3/substreams-sink-sql-protodefs-v1.0.3.spkg
+  database_change: https://github.com/streamingfast/substreams-sink-database-changes/releases/download/v1.2.1/substreams-database-change-v1.2.1.spkg
+
+protobuf:
+  files:
+    - request/evm/v1/payments.proto
+  importPaths:
+    - ./proto
+
+binaries:
+  default:
+    type: wasm/rust-v1
+    file: ./target/wasm32-unknown-unknown/release/request_network_evm.wasm
+
+modules:
+  - name: map_erc20_fee_proxy_payments
+    kind: map
+    initialBlock: 4733364 # sepolia; per-network values in `networks:` below
+    inputs:
+      - params: string
+      - source: sf.ethereum.type.v2.Block
+    output:
+      type: proto:request.evm.v1.Payments
+    doc: |
+      Extracts TransferWithReferenceAndFee events from ERC20FeeProxy contracts.
+      Keeps only successful transactions, filters receipt logs on proxy address AND topic0,
+      and decodes the event data into payment details.
+
+      Params format (one line, `;`-separated):
+        chain=<request-api chain name>;addresses=<comma-separated lowercase 0x addresses>
+
+  - name: db_out
+    kind: map
+    initialBlock: 4733364 # sepolia; per-network values in `networks:` below
+    inputs:
+      - map: map_erc20_fee_proxy_payments
+    output:
+      type: proto:sf.substreams.sink.database.v1.DatabaseChanges
+    doc: |
+      Converts payment events to database changes (upserts) for the SQL sink.
+
+network: sepolia
+
+# Per-network initialBlock and params, mirroring evm/chains.yaml (CI asserts every address there
+# appears here). This section is the single source of module params for EVM chains; sinks only
+# pass --network <name>.
+networks:
+  mainnet:
+    initialBlock:
+      map_erc20_fee_proxy_payments: 10774767
+      db_out: 10774767
+    params:
+      map_erc20_fee_proxy_payments: "chain=mainnet;addresses=0x370de27fdb7d1ff1e1baa7d11c5820a324cf623c"
+  sepolia:
+    initialBlock:
+      map_erc20_fee_proxy_payments: 4733364
+      db_out: 4733364
+    params:
+      map_erc20_fee_proxy_payments: "chain=sepolia;addresses=0x399f5ee127ce7432e4921a61b8cf52b0af52cbfe"
+  polygon:
+    initialBlock:
+      map_erc20_fee_proxy_payments: 14163521
+      db_out: 14163521
+    params:
+      map_erc20_fee_proxy_payments: "chain=matic;addresses=0x2171a0dc12a9e5b1659fef2bb20e54c84fa7db0c,0x0dfbee143b42b41efc5a6f87bfd1ffc78c2f0ac9"
+  arbitrum-one:
+    initialBlock:
+      map_erc20_fee_proxy_payments: 5309741
+      db_out: 5309741
+    params:
+      map_erc20_fee_proxy_payments: "chain=arbitrum-one;addresses=0x0dfbee143b42b41efc5a6f87bfd1ffc78c2f0ac9"
+  bsc:
+    initialBlock:
+      map_erc20_fee_proxy_payments: 11540173
+      db_out: 11540173
+    params:
+      map_erc20_fee_proxy_payments: "chain=bsc;addresses=0x0dfbee143b42b41efc5a6f87bfd1ffc78c2f0ac9"
+  optimism:
+    initialBlock:
+      map_erc20_fee_proxy_payments: 34638633
+      db_out: 34638633
+    params:
+      map_erc20_fee_proxy_payments: "chain=optimism;addresses=0x399f5ee127ce7432e4921a61b8cf52b0af52cbfe"
+  base:
+    initialBlock:
+      map_erc20_fee_proxy_payments: 10827274
+      db_out: 10827274
+    params:
+      map_erc20_fee_proxy_payments: "chain=base;addresses=0x1892196e80c4c17ea5100da765ab48c1fe2fb814"
+
+sink:
+  module: db_out
+  type: sf.substreams.sink.sql.v1.Service
+  config:
+    schema: "./schema.sql"
+    engine: postgres

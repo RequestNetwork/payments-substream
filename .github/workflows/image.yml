@@ -90,7 +90,7 @@ jobs:
       - name: Lint supervisor, entrypoint and test scripts
         run: |
           shellcheck -x sinks/supervisor.sh sinks/tests/run-tests.sh sinks/tests/bin/substreams sinks/tests/bin/timeout
-          shellcheck -s sh sinks/entrypoint.sh
+          shellcheck -s sh sinks/entrypoint.sh sinks/healthcheck.sh
 
       # Restart and backoff, setup retries, cursor sampling and bounded reads, finished replays,
       # legacy DSN, duplicate chains and schemas, every override rule, and the DSN never in argv

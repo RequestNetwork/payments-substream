@@ -336,6 +336,11 @@ fi
 # Per-chain loops run in background subshells; a chain reports "finished" to the sampler by
 # touching $state_dir/<index>.finished.
 state_dir=$(mktemp -d "${TMPDIR:-/tmp}/sink-supervisor.XXXXXX")
+# Written once every chain has finished its replay, so the image's healthcheck
+# (sinks/healthcheck.sh) treats an idle supervisor as healthy. Fixed path: the healthcheck runs
+# outside the supervisor's environment.
+IDLE_MARKER=/tmp/payments-sink-idle
+rm -f "$IDLE_MARKER"
 
 # pause <seconds>: interruptible sleep for the child loops (`child` is the caller's variable, so
 # the TERM trap can kill it).
@@ -422,6 +427,7 @@ shutdown() {
   for pid in "${loop_pids[@]}"; do kill -TERM "$pid" 2>/dev/null || true; done
   for pid in "${loop_pids[@]}"; do wait "$pid" 2>/dev/null || true; done
   rm -rf "$state_dir"
+  rm -f "$IDLE_MARKER"
   exit 0
 }
 trap shutdown TERM INT
@@ -518,6 +524,7 @@ while true; do
   # restart the container and replay-finish in a loop; disabling the pool is the operator's call.
   if [ "$running" -eq 0 ] && [ "$idle_logged" = false ]; then
     log INFO supervisor_idle reason all_chains_finished
+    : >"$IDLE_MARKER"
     idle_logged=true
   fi
 done

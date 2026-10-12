@@ -197,7 +197,8 @@ would only add a value that can drift.
 - Finished replays: after `sink_finished` (stop block set, sink exited 0) the chain is done: it
   keeps appearing in `sink_progress` with `status:"finished"` but never in `sink_stalled` or
   `sink_progress_advanced`. When every chain has finished, the supervisor logs
-  `supervisor_idle{reason:"all_chains_finished"}` once and stays alive idle (still handling TERM)
+  `supervisor_idle{reason:"all_chains_finished"}` once, writes `/tmp/payments-sink-idle` (so the image's
+  healthcheck, `sinks/healthcheck.sh`, reports it healthy) and stays alive idle (still handling TERM)
   rather than exiting 0, which would make the worker pool restart it and replay-finish in a loop.
 
 ## request-api config contract

@@ -67,6 +67,25 @@ expect -ge 4 '"event":"sink_progress","chain":"sepolia".*"status":"finished"' "$
 grep -c sink-run "$STUB_DIR/sink_runs.log" | grep -q '^1$' && pass "sink ran exactly once" || fail "sink run count: $(cat "$STUB_DIR/sink_runs.log")"
 grep -E 'sink_finished|supervisor_idle|"status":"finished"' "$LOG" | head -4
 
+echo "=== B2. healthcheck: healthy while a sink runs or once idle, unhealthy otherwise"
+new_case B2
+rm -f /tmp/payments-sink-idle
+env CHAINS=sepolia SINK_STOP_BLOCK_SEPOLIA=100 SUBSTREAMS_SINK_DSN='postgres://u:p@h/db' SINK_PROGRESS_INTERVAL_SECONDS=1 "$SUP" >"$LOG" 2>/dev/null &
+b2_pid=$!
+sleep 6
+[ -e /tmp/payments-sink-idle ] && pass "B2 idle marker written once every chain finished" || fail "B2 no idle marker"
+"$WT/sinks/healthcheck.sh" && pass "B2 healthy while idle" || fail "B2 unhealthy while idle"
+kill -TERM "$b2_pid" 2>/dev/null; wait "$b2_pid" 2>/dev/null
+[ -e /tmp/payments-sink-idle ] && fail "B2 idle marker left after shutdown" || pass "B2 idle marker removed on shutdown"
+pkill -f "$ROOT/bin/substreams" 2>/dev/null
+"$WT/sinks/healthcheck.sh" && fail "B2 healthy with no sink and no marker" || pass "B2 unhealthy with no sink and no marker"
+new_case B3
+env CHAINS=base SUBSTREAMS_SINK_DSN='postgres://u:p@h/db' SINK_PROGRESS_INTERVAL_SECONDS=1 "$SUP" >"$LOG" 2>/dev/null &
+b3_pid=$!
+sleep 3
+"$WT/sinks/healthcheck.sh" && pass "B3 healthy while a sink runs" || fail "B3 unhealthy while a sink runs"
+kill -TERM "$b3_pid" 2>/dev/null; wait "$b3_pid" 2>/dev/null
+
 echo "=== C. progress semantics: old-hash row -> current-hash row -> advance"
 new_case C
 printf 'Module oldhash000000: Block #500 (0xabc) [cursor-text]\n' >"$STUB_DIR/cursor_base"

@@ -62,9 +62,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 COPY --from=builder /usr/local/bin/substreams /usr/local/bin/substreams
 COPY --from=builder /out/tron.spkg /out/evm.spkg /app/
-COPY --from=builder /build/sinks/chains.env /build/sinks/supervisor.sh /build/sinks/entrypoint.sh /app/sinks/
+COPY --from=builder /build/sinks/chains.env /build/sinks/supervisor.sh /build/sinks/entrypoint.sh /build/sinks/healthcheck.sh /app/sinks/
 
-RUN chmod 0755 /app/sinks/supervisor.sh /app/sinks/entrypoint.sh && \
+RUN chmod 0755 /app/sinks/supervisor.sh /app/sinks/entrypoint.sh /app/sinks/healthcheck.sh && \
     useradd --create-home --uid 10001 --shell /usr/sbin/nologin sink
 
 WORKDIR /home/sink
@@ -75,11 +75,11 @@ USER sink
 ENV SUBSTREAMS_ENDPOINTS_CONFIG_TRON="mainnet.tron.streamingfast.io:443"
 ENV ON_MODULE_HASH_MISMATCH="warn"
 
-# Healthy while at least one sink child is running. Exec form on purpose: the shell form runs
-# under `/bin/sh -c "pgrep -f ..."`, whose own command line contains the pattern, so pgrep
-# would always match itself and the check could never fail.
+# Healthy while at least one sink child is running, or once every chain finished its replay
+# (sinks/healthcheck.sh). A script file, not the shell form: `/bin/sh -c "pgrep -f ..."` carries
+# the pattern in its own command line, so pgrep would always match itself.
 HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
-  CMD ["pgrep", "-f", "substreams sink postgres"]
+  CMD ["/app/sinks/healthcheck.sh"]
 
 # The entrypoint runs the supervisor under bash with only the allow-listed env (sinks/entrypoint.sh).
 ENTRYPOINT ["/app/sinks/entrypoint.sh"]

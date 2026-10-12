@@ -1,5 +1,10 @@
 # TRON sink cutover (REQ-390)
 
+> **Oct 2026 rollout: fast track.** All 7 SSP chains, TRON included, start from a 30-day-back
+> block (`SINK_START_BLOCK_<CHAIN>`) instead of steps 1-3 below. The shadow period is 24 h, not 7
+> days, and the VM sink keeps running. See `request-infrastructure/docs/RUNBOOK.md`, "Fast track
+> (Oct 2026)". This document remains the full path.
+
 Human runbook for moving TRON payment indexing from the EasyPanel/VM Substreams sink to the
 Cloud Run worker pool (`payments-substream-{env}`) backed by Cloud SQL, without losing history or
 burning a full TRON replay (about 20M+ blocks from `initialBlock: 79216121`, `tron/substreams.yaml`).

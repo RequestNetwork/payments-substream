@@ -46,8 +46,11 @@ case "$1" in
     if [ "$3" = tools ]; then
       if [ -f "$STUB_DIR/cursor_hang_$schema" ]; then sleep 3017; fi
       if [ -f "$STUB_DIR/cursor_ignore_term_$schema" ]; then trap '' TERM; sleep 3018; fi
+      # A failing read (refused connection, ...) exits non-zero; an empty cursors table prints
+      # nothing and exits 0.
+      [ -f "$STUB_DIR/cursor_fail_$schema" ] && exit 2
       f="$STUB_DIR/cursor_$schema"
-      [ -f "$f" ] || exit 1
+      [ -f "$f" ] || exit 0
       cat "$f"
       exit 0
     fi

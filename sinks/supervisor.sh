@@ -437,8 +437,9 @@ done
 # from `tools cursor read`, whose lines read `Module <hash>: Block #<num> (...) [...]`. One row
 # exists per module hash that ever ran in the schema; only the current hash's row is progress.
 # A read that outlasts SINK_CURSOR_READ_TIMEOUT_SECONDS gets TERM, and KILL 5 s later if it is
-# still running; either way it prints "timeout timeout", so one slow or stuck database read never
-# stops the sampler from reporting the other chains.
+# still running; it prints "timeout timeout", so one slow or stuck database read never stops the
+# sampler from reporting the other chains. A read that fails (non-zero exit, e.g. a refused
+# connection) prints "error error", so it is never mistaken for a schema with no cursor yet.
 cursor_blocks() {
   local out rc=0
   out=$(SUBSTREAMS_SINK_DSN="${chain_dsns[$1]}" timeout --kill-after=5 \
@@ -448,7 +449,10 @@ cursor_blocks() {
     printf 'timeout timeout\n'
     return
   fi
-  [ "$rc" -eq 0 ] || out=''
+  if [ "$rc" -ne 0 ]; then
+    printf 'error error\n'
+    return
+  fi
   printf '%s\n' "$out" | awk -v hash="${chain_hashes[$1]}" '
     /^Module [^:]+: Block #?[0-9]+/ {
       module = $2; sub(/:$/, "", module)
@@ -481,14 +485,14 @@ while true; do
     read -r block highest <<<"$(cursor_blocks "$i")"
     if [ -e "$state_dir/$i.finished" ]; then
       # Replay done (stop block reached): the sampler keeps reporting it, never as stalled.
-      [ "$block" != timeout ] || block=null
+      case $block in timeout | error) block=null ;; esac
       log INFO sink_progress chain "$chain" block_num "$block" cursor current status finished
       continue
     fi
     running=$((running + 1))
-    if [ "$block" = timeout ]; then
+    if [ "$block" = timeout ] || [ "$block" = error ]; then
       # Not a sample: keep the previous one and let the stall clock run.
-      log WARNING sink_progress chain "$chain" block_num null cursor unreadable \
+      log WARNING sink_progress chain "$chain" block_num null cursor unreadable reason "$block" \
         timeout_seconds "$SINK_CURSOR_READ_TIMEOUT_SECONDS"
       block=null
     elif [ "$block" != null ]; then

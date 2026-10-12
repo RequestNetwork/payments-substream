@@ -256,7 +256,7 @@ echo "=== J. cursor reads are bounded (one stuck read never silences the other c
 new_case J1; : >"$STUB_DIR/cursor_hang_tron"; echo 'Module hash_base: Block #500 (abc) [x]' >"$STUB_DIR/cursor_base"
 run_sup 6 CHAINS=tron,base SUBSTREAMS_SINK_DSN=$DSNV SINK_PROGRESS_INTERVAL_SECONDS=1 SINK_CURSOR_READ_TIMEOUT_SECONDS=1
 expect -ge 2 '"event":"sink_progress","chain":"base","block_num":500,"cursor":"current"' "$LOG" "J1 base keeps reporting"
-expect -ge 1 '"severity":"WARNING","event":"sink_progress","chain":"tron","block_num":null,"cursor":"unreadable","timeout_seconds":1' "$LOG" "J1 stuck tron read reported unreadable"
+expect -ge 1 '"severity":"WARNING","event":"sink_progress","chain":"tron","block_num":null,"cursor":"unreadable","reason":"timeout","timeout_seconds":1' "$LOG" "J1 stuck tron read reported unreadable"
 all_json "$LOG" "J1"
 pkill -f "sleep 3017" 2>/dev/null; true
 new_case J2
@@ -269,6 +269,11 @@ run_sup 10 CHAINS=tron,base SUBSTREAMS_SINK_DSN=$DSNV SINK_PROGRESS_INTERVAL_SEC
 expect -ge 1 '"chain":"tron","block_num":null,"cursor":"unreadable"' "$LOG" "J3 a read that ignores TERM is killed and reported unreadable"
 expect -ge 1 '"event":"sink_progress","chain":"base","block_num":500,"cursor":"current"' "$LOG" "J3 base still reported"
 pkill -f "sleep 3018" 2>/dev/null; true
+new_case J4; : >"$STUB_DIR/cursor_fail_tron"
+run_sup 3 CHAINS=tron,base SUBSTREAMS_SINK_DSN=$DSNV SINK_PROGRESS_INTERVAL_SECONDS=1
+expect -ge 1 '"severity":"WARNING","event":"sink_progress","chain":"tron","block_num":null,"cursor":"unreadable","reason":"error"' "$LOG" "J4 failed read reported unreadable, not none"
+expect -eq 0 '"chain":"tron","block_num":null,"cursor":"none"' "$LOG" "J4 failed read never reported as none"
+expect -ge 1 '"event":"sink_progress","chain":"base","block_num":null,"cursor":"none"' "$LOG" "J4 empty cursor table still reported as none"
 
 echo; echo "FAILURES: $fails"
 exit "$fails"

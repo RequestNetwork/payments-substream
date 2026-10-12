@@ -243,11 +243,11 @@ The full contract is in `docs/contract.md`; the supervisor implements it.
 
 Per-chain overrides (`<CHAIN>` = chain name uppercased, hyphens to underscores):
 `SINK_ENDPOINT_<CHAIN>`, `SINK_NETWORK_<CHAIN>`, `SINK_SCHEMA_<CHAIN>`, `SINK_TOKEN_ENV_<CHAIN>`,
-`SINK_PARAMS_<CHAIN>` (TRON only, passed as `--params` only when set), `SINK_START_BLOCK_<CHAIN>` /
+`SINK_START_BLOCK_<CHAIN>` /
 `SINK_STOP_BLOCK_<CHAIN>` (replays only), `SINK_EXTRA_ARGS_<CHAIN>` (word-split extra flags,
 allow-listed: only the flush/batch flags and `--final-blocks-only`). Overrides are validated
-(schema must equal chains.env, TRON params keep one `chain=` and the manifest proxy address,
-the endpoint is a `streamingfast.io` or `pinax.network` host on port 443, the token variable is
+(schema must equal chains.env, `SINK_PARAMS_<CHAIN>` is rejected because params come from the
+manifest, the endpoint is a `streamingfast.io` or `pinax.network` host on port 443, the token variable is
 `SUBSTREAMS_API_TOKEN` or `SUBSTREAMS_API_TOKEN_ALT`, the package is `tron` or `evm`); see
 `docs/contract.md` "Supervisor behaviour" for the rules.
 The legacy `SUBSTREAMS_ENDPOINTS_CONFIG_TRON` is still honoured for `tron`. Each field resolves

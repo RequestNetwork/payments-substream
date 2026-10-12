@@ -166,23 +166,16 @@ reject() {
   grep -q sink_started "$LOG" && fail "$c started a sink" || pass "$c nothing started"
   all_json "$LOG" "$c"
 }
-# F2 params
-reject H1 PARAMS 'exactly one chain= key' CHAINS=tron SUBSTREAMS_SINK_DSN=$DSNV "SINK_PARAMS_TRON=mainnet_proxy_address=$PROXY"$'\n''chain=tron;chain=mainnet'
-reject H2 PARAMS 'exactly one chain= key' CHAINS=tron SUBSTREAMS_SINK_DSN=$DSNV "SINK_PARAMS_TRON=chain=tron"$'\n'"chain=tron"
-reject H3 PARAMS 'exactly one chain= key' CHAINS=tron SUBSTREAMS_SINK_DSN=$DSNV 'SINK_PARAMS_TRON=chain=tron;chain'
-reject H4 PARAMS "';' is not allowed" CHAINS=tron SUBSTREAMS_SINK_DSN=$DSNV "SINK_PARAMS_TRON=mainnet_proxy_address=$PROXY"$'\n'"chain=tron;x=1"
-reject H5 PARAMS "mainnet_proxy_address=$PROXY" CHAINS=tron SUBSTREAMS_SINK_DSN=$DSNV 'SINK_PARAMS_TRON=chain=tron'
-reject H6 PARAMS "mainnet_proxy_address=$PROXY" CHAINS=tron SUBSTREAMS_SINK_DSN=$DSNV "SINK_PARAMS_TRON=mainnet_proxy_address=TEvilEvilEvil"$'\n'"chain=tron"
-reject H7 PARAMS "mainnet_proxy_address=$PROXY" CHAINS=tron SUBSTREAMS_SINK_DSN=$DSNV "SINK_PARAMS_TRON=mainnet_proxy_address=$PROXY"$'\n'"mainnet_proxy_address=TEvil"$'\n'"chain=tron"
-reject H8 PARAMS 'must contain chain=tron' CHAINS=tron SUBSTREAMS_SINK_DSN=$DSNV "SINK_PARAMS_TRON=mainnet_proxy_address=$PROXY"$'\n'"chain=base"
+# Params come from the package manifest: every SINK_PARAMS_<CHAIN> override is rejected.
+reject H1 PARAMS 'params come from the package manifest' CHAINS=tron SUBSTREAMS_SINK_DSN=$DSNV "SINK_PARAMS_TRON=mainnet_proxy_address=$PROXY"$'\n'"chain=tron"
+reject H2 PARAMS 'params come from the package manifest' CHAINS=tron SUBSTREAMS_SINK_DSN=$DSNV "SINK_PARAMS_TRON=mainnet_proxy_address=TEvilEvilEvil"$'\n'"chain=tron"
+reject H3 PARAMS 'params come from the package manifest' CHAINS=base SUBSTREAMS_SINK_DSN=$DSNV 'SINK_PARAMS_BASE=chain=base;addresses=0xabc'
 new_case H9
-run_sup 2 CHAINS=tron,base SUBSTREAMS_SINK_DSN=$DSNV SINK_PROGRESS_INTERVAL_SECONDS=1 \
-  "SINK_PARAMS_TRON=  mainnet_proxy_address = $PROXY  "$'\n'"chain=tron"
-expect -eq 1 '"event":"sink_started","chain":"tron"' "$LOG" "H9 valid tron params accepted"
+run_sup 2 CHAINS=tron,base SUBSTREAMS_SINK_DSN=$DSNV SINK_PROGRESS_INTERVAL_SECONDS=1
+expect -eq 1 '"event":"sink_started","chain":"tron"' "$LOG" "H9 tron runs on its manifest params"
 expect -eq 1 '"event":"sink_started","chain":"base"' "$LOG" "H9 base runs on its manifest params"
 expect -eq 0 sink_config_invalid "$LOG" "H9 no config error"
-grep -q -- '--params map_erc20_fee_proxy_payments=  mainnet_proxy_address' "$STUB_DIR/calls.log" && pass "H9 tron --params passed" || fail "H9 tron --params missing"
-grep 'stub: sink postgres' "$STUB_DIR/calls.log" | grep -- '--network base' | grep -q -- '--params' && fail "H9 base got --params" || pass "H9 base has no --params"
+grep -q -- '--params' "$STUB_DIR/calls.log" && fail "H9 a sink got --params" || pass "H9 no sink gets --params"
 # F3 schema
 reject H10 SCHEMA "does not match this chain's schema" CHAINS=base SUBSTREAMS_SINK_DSN=$DSNV SINK_SCHEMA_BASE=mainnet
 reject H11 SCHEMA "does not match this chain's schema" CHAINS=tron SUBSTREAMS_SINK_DSN=$DSNV SINK_SCHEMA_TRON=public
@@ -245,7 +238,7 @@ reject I7 ENDPOINT 'streamingfast.io:443' CHAINS=base SUBSTREAMS_SINK_DSN=$DSNV 
 new_case I8
 run_sup 2 CHAINS=base SUBSTREAMS_SINK_DSN=$DSNV SINK_ENDPOINT_BASE=base.substreams.pinax.network:443 SINK_PROGRESS_INTERVAL_SECONDS=1
 expect -eq 1 '"event":"sink_started","chain":"base"' "$LOG" "I8 pinax endpoint accepted"
-reject I9 PARAMS 'evm params come from the package manifest' CHAINS=base SUBSTREAMS_SINK_DSN=$DSNV 'SINK_PARAMS_BASE=chain=base;addresses=0x00000000000000000000000000000000000000ee'
+reject I9 PARAMS 'params come from the package manifest' CHAINS=base SUBSTREAMS_SINK_DSN=$DSNV 'SINK_PARAMS_BASE=chain=base;addresses=0x00000000000000000000000000000000000000ee'
 reject I10 SPKG 'package must be tron or evm' CHAINS=base SUBSTREAMS_SINK_DSN=$DSNV 'SINK_SPKG_BASE=../../tmp/evil'
 new_case I11
 printf 'touch %s/pwned\n' "$STUB_DIR" >"$STUB_DIR/evil.env"

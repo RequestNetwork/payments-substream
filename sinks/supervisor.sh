@@ -89,10 +89,6 @@ if [[ $base_dsn == postgresql://* ]]; then
   base_dsn="postgres://${base_dsn#postgresql://}"
 fi
 
-# The TRON module's proxy address: the default in tron/substreams.yaml `params:`. A
-# SINK_PARAMS_TRON override may restate it but never point the module at another contract.
-TRON_PROXY_ADDRESS=TCUDPYnS9dH3WvFEaE7wN7vnDa51J4R4fd
-
 ON_MODULE_HASH_MISMATCH=${ON_MODULE_HASH_MISMATCH:-warn}
 SINK_MAX_RETRIES=${SINK_MAX_RETRIES:--1}
 # Last-resort fallback only: each chain's confirmation depth comes from
@@ -175,23 +171,8 @@ module_hash() {
   printf '%s\n' "$out" | awk '/^Name: db_out$/ { found = 1 } found && /^Hash: / { print $2; exit }'
 }
 
-# param_values <key>: reads `key=value` lines on stdin and prints `=<value>` (the value trimmed at
-# both ends, as the modules trim it) for every line whose trimmed key is <key>, one per line, so
-# an empty value still yields a line; a bare `<key>` line without `=` counts too (the EVM module
-# reads it as an empty value). Prints nothing when no line matches.
-param_values() {
-  awk -v want="$1" '
-    function trim(x) { sub(/^[[:space:]]+/, "", x); sub(/[[:space:]]+$/, "", x); return x }
-    {
-      eq = index($0, "=")
-      k = trim(eq ? substr($0, 1, eq - 1) : $0)
-      if (k != want) next
-      print "=" (eq ? trim(substr($0, eq + 1)) : "")
-    }'
-}
-
 chain_names=() chain_dsns=() chain_spkgs=() chain_endpoints=() chain_networks=()
-chain_schemas=() chain_tokens=() chain_params=() chain_starts=() chain_stops=() chain_extras=()
+chain_schemas=() chain_tokens=() chain_starts=() chain_stops=() chain_extras=()
 chain_hashes=() chain_undo=()
 
 for chain in "${chains[@]}"; do
@@ -263,38 +244,13 @@ for chain in "${chains[@]}"; do
       message "network override does not match this chain's network"
     continue
   fi
-  # A params override must still label rows with this chain, and must parse the same way in the
-  # supervisor as in the module: the EVM module splits on `;` and newlines and keeps the LAST
-  # `chain=`, the TRON module splits on newlines only and keeps the FIRST -- so exactly one
-  # `chain=` key is accepted, TRON overrides may not contain `;`, and a TRON override must keep
-  # the manifest's proxy address.
+  # Module params come from the package manifest only. An override could point the module at
+  # another contract, and it would change the module hash the progress sampler reads.
   params_override_var="SINK_PARAMS_${key}"
   if [ -n "${!params_override_var:-}" ]; then
-    params_value=${!params_override_var}
-    params_error=''
-    params_chains=$(printf '%s\n' "$params_value" | tr ';' '\n' | param_values chain)
-    if [ "$spkg_name" = evm ]; then
-      # The EVM manifest sets chain and contract addresses per network; an override could only
-      # point the module at another contract.
-      params_error="evm params come from the package manifest; SINK_PARAMS overrides are not allowed"
-    elif [ "$(printf '%s' "$params_chains" | grep -c '^=')" -gt 1 ]; then
-      params_error="params override must contain exactly one chain= key"
-    elif [ "$params_chains" != "=$chain" ]; then
-      params_error="params override must contain chain=$chain"
-    elif [ "$spkg_name" = tron ]; then
-      if [[ $params_value == *\;* ]]; then
-        params_error="tron params are newline-separated; ';' is not allowed"
-      else
-        params_proxies=$(printf '%s\n' "$params_value" | param_values mainnet_proxy_address)
-        if [ "$params_proxies" != "=$TRON_PROXY_ADDRESS" ]; then
-          params_error="tron params must contain exactly one mainnet_proxy_address=$TRON_PROXY_ADDRESS"
-        fi
-      fi
-    fi
-    if [ -n "$params_error" ]; then
-      log ERROR sink_config_invalid chain "$chain" field PARAMS message "$params_error"
-      continue
-    fi
+    log ERROR sink_config_invalid chain "$chain" field PARAMS \
+      message "params come from the package manifest; SINK_PARAMS overrides are not allowed"
+    continue
   fi
   # Extra sink flags are allow-listed: an override must never re-add the DSN, TLS, token,
   # params, endpoint or network flags that the supervisor owns.
@@ -343,7 +299,7 @@ for chain in "${chains[@]}"; do
   fi
 
   if [[ $base_dsn == *\?* ]]; then sep='&'; else sep='?'; fi
-  params_var="SINK_PARAMS_${key}" start_var="SINK_START_BLOCK_${key}"
+  start_var="SINK_START_BLOCK_${key}"
   stop_var="SINK_STOP_BLOCK_${key}"
 
   chain_names+=("$chain")
@@ -353,7 +309,6 @@ for chain in "${chains[@]}"; do
   chain_networks+=("$network")
   chain_schemas+=("$schema")
   chain_tokens+=("$token_env")
-  chain_params+=("${!params_var:-}")
   chain_starts+=("${!start_var:-}")
   chain_stops+=("${!stop_var:-}")
   chain_extras+=("${extra_words[*]}")
@@ -426,9 +381,6 @@ run_chain() {
     --max-retries "$SINK_MAX_RETRIES"
     --undo-buffer-size "${chain_undo[$i]}"
     --prometheus-addr "127.0.0.1:$((9100 + i))")
-  if [ -n "${chain_params[$i]}" ]; then
-    cmd+=(--params "map_erc20_fee_proxy_payments=${chain_params[$i]}")
-  fi
   if [ -n "${chain_starts[$i]}" ]; then cmd+=(-s "${chain_starts[$i]}"); fi
   if [ -n "${chain_stops[$i]}" ]; then cmd+=(-t "${chain_stops[$i]}"); fi
   if [ -n "${chain_extras[$i]}" ]; then

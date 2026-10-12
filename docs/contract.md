@@ -104,7 +104,7 @@ never trace the DSN or run code. A new variable must be added to that allow-list
 - `SINK_CURSOR_READ_TIMEOUT_SECONDS` default `20`: bound on each `tools cursor read`. A read that
   hits it logs `sink_progress{cursor:"unreadable", block_num:null}` (severity WARNING) for that
   chain only; the sampler goes on with the other chains, and the stall clock keeps running.
-- Per chain: `SINK_ENDPOINT_<CHAIN>`, `SINK_NETWORK_<CHAIN>`, `SINK_PARAMS_<CHAIN>`,
+- Per chain: `SINK_ENDPOINT_<CHAIN>`, `SINK_NETWORK_<CHAIN>`,
   `SINK_START_BLOCK_<CHAIN>`, `SINK_STOP_BLOCK_<CHAIN>`, `SINK_SCHEMA_<CHAIN>`,
   `SINK_TOKEN_ENV_<CHAIN>`, `SINK_EXTRA_ARGS_<CHAIN>`.
 - Legacy `SUBSTREAMS_ENDPOINTS_CONFIG_TRON` is honoured for `tron`.
@@ -117,8 +117,7 @@ of the `SINK_<FIELD>_<CHAIN>` runtime overrides): `<CHAIN>_ENDPOINT`, `<CHAIN>_N
 `<CHAIN>_SCHEMA`, `<CHAIN>_SPKG`, `<CHAIN>_TOKEN_ENV`. Module params have no default in
 `sinks/chains.env`: they come from the manifests (the `params:` block of `tron/substreams.yaml`;
 the per-network `networks:` section of `evm/substreams.yaml`, selected with `--network`), and
-`SINK_PARAMS_<CHAIN>` is a runtime override passed as `--params` only when set (TRON only; see
-"Supervisor behaviour"). For each of those fields the supervisor
+there is no params override (see "Supervisor behaviour"). For each of those fields the supervisor
 resolves the value as:
 
 1. `SINK_<FIELD>_<CHAIN>` (runtime override from the supervisor env), else
@@ -166,13 +165,9 @@ would only add a value that can drift.
   - `SCHEMA`: with `SUBSTREAMS_SINK_DSN`, a `SINK_SCHEMA_<CHAIN>` override must equal the chain's
     `<CHAIN>_SCHEMA` in `sinks/chains.env` (a chain never writes another chain's schema). The
     legacy `DSN`-only layout (`public`) is exempt.
-  - `PARAMS`: an EVM chain never takes `SINK_PARAMS_<CHAIN>`: its chain label and contract
-    addresses come from the manifest's `networks:` entry, and an override could only point the
-    module at another contract. For TRON, `SINK_PARAMS_TRON` must contain exactly one `chain=` key
-    (counted after splitting on `;` and newlines; a bare `chain` without `=` counts) whose value is
-    the chain name. The override is newline-separated only (any `;` is rejected, the TRON module does not
-    split on it) and must contain exactly one `mainnet_proxy_address=` line equal to the
-    `tron/substreams.yaml` default (`TCUDPYnS9dH3WvFEaE7wN7vnDa51J4R4fd`).
+  - `PARAMS`: `SINK_PARAMS_<CHAIN>` is rejected for every chain. The chain label, contract
+    addresses and TRON proxy come from the manifest only. An override could only point the module
+    at another contract, and it would change the module hash the progress sampler reads.
   - `EXTRA_ARGS`: `SINK_EXTRA_ARGS_<CHAIN>` is split on whitespace (newlines included) and only
     these flags are accepted, each as separate words: `--final-blocks-only`,
     `--batch-block-flush-interval <int>`, `--batch-row-flush-interval <int>`,

@@ -53,7 +53,7 @@ chain=<request-api chain name>;addresses=<comma-separated lowercase 0x addresses
 
 Checksummed addresses are accepted (they are lowercased). Params are never set by the sink
 configuration: they come from the `networks:` section of `substreams.yaml`, which is the single
-source of per-network `initialBlock` and params. `SINK_PARAMS_<CHAIN>` exists only as a runtime
+source of per-network `initialBlock` and params. The supervisor rejects any `SINK_PARAMS_<CHAIN>`
 override.
 
 ## Networks

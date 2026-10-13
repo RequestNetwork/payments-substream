@@ -302,5 +302,17 @@ expect -ge 1 '"severity":"WARNING","event":"sink_progress","chain":"tron","block
 expect -eq 0 '"chain":"tron","block_num":null,"cursor":"none"' "$LOG" "J4 failed read never reported as none"
 expect -ge 1 '"event":"sink_progress","chain":"base","block_num":null,"cursor":"none"' "$LOG" "J4 empty cursor table still reported as none"
 
+echo "=== K. integers have no leading zeros (JSON numbers, never octal)"
+reject K1 UNDO_BUFFER_SIZE 'not a non-negative integer' CHAINS=base SUBSTREAMS_SINK_DSN=$DSNV SINK_UNDO_BUFFER_SIZE_BASE=020
+new_case K2
+env CHAINS=base SUBSTREAMS_SINK_DSN=$DSNV SINK_PROGRESS_INTERVAL_SECONDS=01 "$SUP" >"$LOG" 2>/dev/null; code=$?
+[ "$code" -eq 1 ] && pass "K2 zero-padded global integer exit 1" || fail "K2 exit $code"
+expect -eq 1 '"field":"SINK_PROGRESS_INTERVAL_SECONDS","message":"not an integer"' "$LOG" "K2 reason"
+reject K3 EXTRA_ARGS 'invalid value for --flush-retry-count' CHAINS=base SUBSTREAMS_SINK_DSN=$DSNV 'SINK_EXTRA_ARGS_BASE=--flush-retry-count 03'
+eval "$(sed -n '/^log() {/,/^}/p' "$SUP")"
+eval "$(sed -n '/^json_str() {/,/^}/p' "$SUP")"
+line=$(log INFO probe a 020 b 7 c -1 d 0)
+python3 -c 'import json,sys; o=json.loads(sys.argv[1]); assert o["a"]=="020" and o["b"]==7 and o["c"]==-1 and o["d"]==0' "$line" && pass "K4 log emits zero-padded values as strings, integers as numbers" || fail "K4 log line: $line"
+
 echo; echo "FAILURES: $fails"
 exit "$fails"

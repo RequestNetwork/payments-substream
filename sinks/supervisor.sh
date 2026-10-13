@@ -30,14 +30,15 @@ json_str() {
   printf '"%s"' "$s"
 }
 
-# log <severity> <event> [key value]... ; values matching ^-?[0-9]+$ are emitted as numbers,
+# log <severity> <event> [key value]... ; values that are JSON integers (no leading zeros) are
+# emitted as numbers,
 # the literal "null" as null, everything else as a string.
 log() {
   local severity=$1 event=$2 line
   shift 2
   line="{\"severity\":$(json_str "$severity"),\"event\":$(json_str "$event")"
   while [ "$#" -ge 2 ]; do
-    if [[ $2 =~ ^-?[0-9]+$ ]] || [ "$2" = "null" ]; then
+    if [[ $2 =~ ^-?(0|[1-9][0-9]*)$ ]] || [ "$2" = "null" ]; then
       line+=",$(json_str "$1"):$2"
     else
       line+=",$(json_str "$1"):$(json_str "$2")"
@@ -100,7 +101,8 @@ SINK_CURSOR_READ_TIMEOUT_SECONDS=${SINK_CURSOR_READ_TIMEOUT_SECONDS:-20}
 
 for name in SINK_MAX_RETRIES SINK_UNDO_BUFFER_SIZE SINK_PROGRESS_INTERVAL_SECONDS SINK_STALL_SECONDS \
   SINK_CURSOR_READ_TIMEOUT_SECONDS; do
-  if ! [[ ${!name} =~ ^-?[0-9]+$ ]]; then
+  # No leading zeros: `020` is not a JSON number, and the CLI may read it as octal.
+  if ! [[ ${!name} =~ ^-?(0|[1-9][0-9]*)$ ]]; then
     log ERROR sink_config_invalid chain null field "$name" message "not an integer"
     exit 1
   fi
@@ -266,8 +268,8 @@ for chain in "${chains[@]}"; do
         --final-blocks-only) w=$((w + 1)); continue ;;
         --batch-block-flush-interval | --batch-row-flush-interval | --live-block-flush-interval | \
           --flush-retry-count)
-          value_re='^[0-9]+$' ;;
-        --flush-retry-delay) value_re='^[0-9]+(ms|s|m|h)$' ;;
+          value_re='^(0|[1-9][0-9]*)$' ;;
+        --flush-retry-delay) value_re='^(0|[1-9][0-9]*)(ms|s|m|h)$' ;;
         *)
           extra_error="flag not allowed: ${flag}"
           break ;;
@@ -287,7 +289,7 @@ for chain in "${chains[@]}"; do
   # payment in a block that is later reorged out never reaches the payments database.
   undo_override="SINK_UNDO_BUFFER_SIZE_${key}" undo_default="${key}_UNDO_BUFFER_SIZE"
   undo=${!undo_override:-${!undo_default:-$SINK_UNDO_BUFFER_SIZE}}
-  if ! [[ $undo =~ ^[0-9]+$ ]]; then
+  if ! [[ $undo =~ ^(0|[1-9][0-9]*)$ ]]; then
     log ERROR sink_config_invalid chain "$chain" field UNDO_BUFFER_SIZE message "not a non-negative integer"
     continue
   fi

@@ -251,10 +251,12 @@ is logged once and never compared again: Hasura confirms the request, which stop
 the metric, sink lag and a real indexing defect look the same:
 
 ```bash
-# HUMAN -- the window's missing_in_postgres payments (each line: chain, reference, txHash, amounts)
+# HUMAN -- every missing_in_postgres since TRON went to shadow (each line: chain, reference,
+# txHash, amounts). Use the shadow start time, not a fixed lookback: an early miss is logged
+# only once, so a later flip would otherwise drop it from the list.
 gcloud logging read \
-  'resource.type="cloud_run_revision" AND resource.labels.service_name="request-api-stage" AND jsonPayload.msg:"payment_detection_shadow_mismatch" AND jsonPayload.msg:"missing_in_postgres"' \
-  --project=requestnetwork --freshness=26h --format='value(jsonPayload.msg)'
+  'resource.type="cloud_run_revision" AND resource.labels.service_name="request-api-stage" AND jsonPayload.msg:"payment_detection_shadow_mismatch" AND jsonPayload.msg:"missing_in_postgres" AND timestamp>="<shadow start, e.g. 2026-10-14T10:00:00Z>"' \
+  --project=requestnetwork --format='value(jsonPayload.msg)'
 ```
 
 Look each one up in the payments database (`psql` as `payments_reader`, in the chain's schema):

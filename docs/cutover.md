@@ -246,6 +246,28 @@ Also enable `payments_shadow_alert_enabled` (a request-infrastructure PR setting
 metric for >= 24 h with **zero unexplained mismatches** (a TRON Hasura error counts as skipped,
 not a mismatch -- `docs/contract.md` "shadow reads both Hasura and Postgres and acts on Hasura").
 
+Then re-check every `missing_in_postgres` from that window. A payment Postgres had not indexed yet
+is logged once and never compared again: Hasura confirms the request, which stops listening. So in
+the metric, sink lag and a real indexing defect look the same:
+
+```bash
+# HUMAN -- the window's missing_in_postgres payments (each line: chain, reference, txHash, amounts)
+gcloud logging read \
+  'resource.type="cloud_run_revision" AND resource.labels.service_name="request-api-stage" AND jsonPayload.msg:"payment_detection_shadow_mismatch" AND jsonPayload.msg:"missing_in_postgres"' \
+  --project=requestnetwork --freshness=26h --format='value(jsonPayload.msg)'
+```
+
+Look each one up in the payments database (`psql` as `payments_reader`, in the chain's schema):
+
+```sql
+SELECT tx_hash, payment_reference, amount, block_number
+FROM tron.payments
+WHERE payment_reference = lower('<reference>') AND lower(tx_hash) = lower('<txHash>');
+```
+
+Every one must be there by now, with the log line's `hasuraAmount`: that was lag. A payment still
+missing, or with a different amount, is an indexing defect. Do not flip; investigate it.
+
 Only once that is clean:
 
 ```bash
@@ -272,8 +294,14 @@ Repeat this whole runbook (steps 1-5) for production only after stage has been o
 Stop (do **not** delete) the EasyPanel TRON sink app. Keep the VM Postgres instance and its data
 for 14 days (step 10).
 
-Rollback, if needed: set `PAYMENTS_SOURCE_TRON=hasura` and restart request-api, then restart the
-VM sink app in EasyPanel -- it resumes from its own cursor, untouched by anything above.
+Rollback, if needed, in this order:
+
+1. Restart the VM sink app in EasyPanel. It resumes from its own cursor, untouched by anything
+   above, but its database stopped updating while it was off.
+2. Wait until it has caught up: `SELECT max(block_num) FROM public.cursors;` on the VM is within a
+   few blocks of the TRON head (or of `SELECT max(block_num) FROM tron.cursors;` in Cloud SQL).
+3. Only then set `PAYMENTS_SOURCE_TRON=hasura` and restart request-api. Flipping first would make
+   detection read the VM's stale data while it catches up.
 
 ## 7. Decision gate: Hasura and the SDK (owner decision, not made in this run)
 

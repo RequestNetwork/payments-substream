@@ -85,6 +85,14 @@ b3_pid=$!
 sleep 3
 "$WT/sinks/healthcheck.sh" && pass "B3 healthy while a sink runs" || fail "B3 unhealthy while a sink runs"
 kill -TERM "$b3_pid" 2>/dev/null; wait "$b3_pid" 2>/dev/null
+new_case B4; echo 99 >"$STUB_DIR/setup_fail_base"
+env CHAINS=base SUBSTREAMS_SINK_DSN='postgres://u:p@h/db' SINK_PROGRESS_INTERVAL_SECONDS=1 "$SUP" >"$LOG" 2>/dev/null &
+b4_pid=$!
+sleep 3
+grep -q sink_setup_failed "$LOG" && pass "B4 setup keeps failing" || fail "B4 setup did not fail"
+"$WT/sinks/healthcheck.sh" && fail "B4 healthy while only setup retries" || pass "B4 unhealthy while only setup retries"
+kill -TERM "$b4_pid" 2>/dev/null; wait "$b4_pid" 2>/dev/null
+pkill -f "$ROOT/bin/substreams" 2>/dev/null; true
 
 echo "=== C. progress semantics: old-hash row -> current-hash row -> advance"
 new_case C

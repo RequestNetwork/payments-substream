@@ -1,60 +1,85 @@
-# Stage 1: Build the Substreams package from source
-FROM rust:slim AS builder
+# Payments sink image (D'): both Substreams packages + the multi-chain supervisor.
+# Base images are pinned by digest and the Substreams CLI by version + sha256; bump them
+# deliberately (docker buildx imagetools inspect <image:tag> for a new digest).
 
-RUN apt-get update && apt-get install -y \
-    curl \
-    && rm -rf /var/lib/apt/lists/*
+# Stage 1: Build the Substreams packages from source
+FROM rust:1.93.0-slim-bookworm@sha256:776861219cd851131c1cec3bbd7cbeb16b99a794048097eb69ad9682a8ed0d57 AS builder
 
-# Install Substreams CLI
-RUN curl -sSL https://github.com/streamingfast/substreams/releases/latest/download/substreams_linux_x86_64.tar.gz | tar xz -C /usr/local/bin
+ARG TARGETARCH
+ARG SUBSTREAMS_VERSION=v1.24.0
+ARG SUBSTREAMS_SHA256_AMD64=8ed58a785c00657fb71c7bc390b781357cd13e415497e4b4f016a9e315d751a6
+ARG SUBSTREAMS_SHA256_ARM64=a2bb55dd752830177f0bc4e27a4ab71ea2a443ef4a11c1af85db671af975924b
 
-# Add WASM target
-RUN rustup target add wasm32-unknown-unknown
-
-# Copy source code
-WORKDIR /build/tron
-COPY tron/ .
-
-# Build WASM module and package
-RUN cargo build --target wasm32-unknown-unknown --release && \
-    substreams pack ./substreams.yaml
-
-# Stage 2: Runtime image
-FROM ubuntu:22.04
-
-# Install dependencies
-RUN apt-get update && apt-get install -y \
+RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Download substreams-sink-sql binary (v4.12.0) - detect architecture
-ARG TARGETARCH
-RUN ARCH=$(echo ${TARGETARCH:-amd64} | sed 's/amd64/x86_64/' | sed 's/arm64/arm64/') && \
-    curl -sSL "https://github.com/streamingfast/substreams-sink-sql/releases/download/v4.12.0/substreams-sink-sql_linux_${ARCH}.tar.gz" -o /tmp/sink.tar.gz && \
-    tar xzf /tmp/sink.tar.gz -C /usr/local/bin/ && \
-    rm /tmp/sink.tar.gz && \
-    chmod +x /usr/local/bin/substreams-sink-sql
+# Install the pinned Substreams CLI (provides `substreams pack` and `substreams sink postgres`)
+RUN set -eu; \
+    case "${TARGETARCH:-amd64}" in \
+      amd64) ARCH=x86_64; SHA256="$SUBSTREAMS_SHA256_AMD64" ;; \
+      arm64) ARCH=arm64; SHA256="$SUBSTREAMS_SHA256_ARM64" ;; \
+      *) echo "unsupported TARGETARCH: ${TARGETARCH}" >&2; exit 1 ;; \
+    esac; \
+    curl -fsSL -o /tmp/substreams.tar.gz \
+      "https://github.com/streamingfast/substreams/releases/download/${SUBSTREAMS_VERSION}/substreams_linux_${ARCH}.tar.gz"; \
+    echo "${SHA256}  /tmp/substreams.tar.gz" | sha256sum -c -; \
+    tar xzf /tmp/substreams.tar.gz -C /usr/local/bin substreams; \
+    rm /tmp/substreams.tar.gz; \
+    substreams --version
 
-# Copy the built .spkg from builder stage and schema
-COPY --from=builder /build/tron/request-network-tron-*.spkg /app/
-COPY tron/schema.sql /app/
+# Add WASM target
+RUN rustup target add wasm32-unknown-unknown
 
-WORKDIR /app
+# Copy source code. src/pb is committed: protogen is not run here (it fails on CLI v1.24.0).
+WORKDIR /build
+COPY rust-toolchain.toml schema.sql ./
+COPY tron/ tron/
+COPY evm/ evm/
+COPY sinks/ sinks/
 
-# Environment variables (override in deployment)
-ENV DSN=""
-ENV SUBSTREAMS_API_TOKEN=""
-# Endpoint configured via SUBSTREAMS_ENDPOINTS_CONFIG_TRON env var
+# The package copies must match the root schema.sql (refresh with `make sync-schema`)
+RUN diff -q schema.sql tron/schema.sql && diff -q schema.sql evm/schema.sql
+
+# Build WASM modules and packages
+RUN mkdir -p /out && \
+    cd /build/tron && cargo build --locked --target wasm32-unknown-unknown --release && \
+    substreams pack ./substreams.yaml -o /out/tron.spkg && \
+    cd /build/evm && cargo build --locked --target wasm32-unknown-unknown --release && \
+    substreams pack ./substreams.yaml -o /out/evm.spkg
+
+# Stage 2: Runtime image
+FROM ubuntu:22.04@sha256:5ec03bb3441e8b0bf3b4f9cd4629a1ae763010dc3035bb8da3ae6cf026486401
+
+# ca-certificates for gRPC/TLS, procps for the healthcheck. postgresql-client is only for humans
+# debugging with the base DSN (psql rejects a DSN carrying schemaName=); the supervisor never uses it.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    postgresql-client \
+    procps \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /usr/local/bin/substreams /usr/local/bin/substreams
+COPY --from=builder /out/tron.spkg /out/evm.spkg /app/
+COPY --from=builder /build/sinks/chains.env /build/sinks/supervisor.sh /build/sinks/entrypoint.sh /build/sinks/healthcheck.sh /app/sinks/
+
+RUN chmod 0755 /app/sinks/supervisor.sh /app/sinks/entrypoint.sh /app/sinks/healthcheck.sh && \
+    useradd --create-home --uid 10001 --shell /usr/sbin/nologin sink
+
+WORKDIR /home/sink
+USER sink
+
+# Environment variables (override in deployment). Secrets (SUBSTREAMS_SINK_DSN / DSN,
+# SUBSTREAMS_API_TOKEN) are injected at run time, never baked in. See docs/contract.md.
 ENV SUBSTREAMS_ENDPOINTS_CONFIG_TRON="mainnet.tron.streamingfast.io:443"
 ENV ON_MODULE_HASH_MISMATCH="warn"
 
-# Create entrypoint script - dynamically find the .spkg file
-RUN printf '#!/bin/bash\nset -e\n\nSPKG=$(ls /app/request-network-tron-*.spkg 2>/dev/null | head -1)\nif [ -z "$SPKG" ]; then\n  echo "ERROR: No .spkg file found in /app/"\n  exit 1\nfi\necho "Using package: $SPKG"\n\n# Setup the database schema first\necho "Setting up database schema..."\nsubstreams-sink-sql setup "$DSN" "$SPKG" || true\n\n# Run the sink\necho "Starting sink..."\nexec substreams-sink-sql run --on-module-hash-mistmatch=${ON_MODULE_HASH_MISMATCH:-warn} "$DSN" "$SPKG"\n' > /entrypoint.sh && \
-    chmod +x /entrypoint.sh
+# Healthy while at least one sink child is running, or once every chain finished its replay
+# (sinks/healthcheck.sh). A script file, not the shell form: `/bin/sh -c "pgrep -f ..."` carries
+# the pattern in its own command line, so pgrep would always match itself.
+HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
+  CMD ["/app/sinks/healthcheck.sh"]
 
-# Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-  CMD pgrep substreams-sink-sql || exit 1
-
-ENTRYPOINT ["/bin/bash", "/entrypoint.sh"]
+# The entrypoint runs the supervisor under bash with only the allow-listed env (sinks/entrypoint.sh).
+ENTRYPOINT ["/app/sinks/entrypoint.sh"]

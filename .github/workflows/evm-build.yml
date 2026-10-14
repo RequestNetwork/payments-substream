@@ -1,0 +1,301 @@
+name: EVM Substreams Build
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'evm/**'
+      - 'schema.sql'
+      - '.github/workflows/evm-build.yml'
+  push:
+    branches:
+      - main
+    paths:
+      - 'evm/**'
+      - 'schema.sql'
+      - '.github/workflows/evm-build.yml'
+  workflow_dispatch:
+    inputs:
+      run_integration_tests:
+        description: 'Run integration tests against live endpoints'
+        required: false
+        default: false
+        type: boolean
+      publish_package:
+        description: 'Build and publish package artifact'
+        required: false
+        default: false
+        type: boolean
+
+jobs:
+  build-and-test:
+    name: Build and Test EVM Substreams
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.93.0
+          targets: wasm32-unknown-unknown
+          components: clippy
+
+      - name: Cache Cargo dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            evm/target/
+          key: ${{ runner.os }}-cargo-evm-${{ hashFiles('evm/Cargo.toml', 'evm/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-evm-
+
+      - name: Build WASM module
+        working-directory: evm
+        run: make build
+
+      - name: Run unit tests
+        working-directory: evm
+        run: make test
+
+      - name: Clippy (wasm32, deny warnings)
+        working-directory: evm
+        run: make clippy
+
+      - name: Check evm/schema.sql matches schema.sql
+        working-directory: evm
+        run: make check-schema
+
+      - name: Verify build artifacts
+        working-directory: evm
+        run: |
+          echo "Checking build artifacts..."
+          if [ ! -f "target/wasm32-unknown-unknown/release/request_network_evm.wasm" ]; then
+            echo "ERROR: WASM file not found!"
+            exit 1
+          fi
+          echo "Build artifacts verified successfully"
+
+      - name: Every evm/chains.yaml address appears lowercase in evm/substreams.yaml
+        run: |
+          ADDRESSES=$(grep -oE '"0x[0-9a-fA-F]{40}"' evm/chains.yaml | tr -d '"' | tr 'A-F' 'a-f' | sort -u)
+          if [ -z "$ADDRESSES" ]; then
+            echo "ERROR: no addresses found in evm/chains.yaml"
+            exit 1
+          fi
+          MISSING=0
+          for ADDRESS in $ADDRESSES; do
+            if ! grep -qF "$ADDRESS" evm/substreams.yaml; then
+              echo "ERROR: $ADDRESS (evm/chains.yaml) is missing from evm/substreams.yaml networks:"
+              MISSING=1
+            fi
+          done
+          if [ "$MISSING" != "0" ]; then
+            exit 1
+          fi
+          echo "All $(echo "$ADDRESSES" | wc -l | tr -d ' ') chains.yaml addresses present in substreams.yaml"
+
+  integration-test:
+    name: Integration Test (known payments)
+    runs-on: ubuntu-latest
+    needs: build-and-test
+    # Run on: push to main (merge) or manual trigger
+    # PRs only run unit tests (no API key needed)
+    if: |
+      github.event.inputs.run_integration_tests == 'true' ||
+      github.event.inputs.publish_package == 'true' ||
+      (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: payments
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Install PostgreSQL client
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.93.0
+          targets: wasm32-unknown-unknown
+
+      - name: Cache Cargo dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            evm/target/
+          key: ${{ runner.os }}-cargo-evm-${{ hashFiles('evm/Cargo.toml', 'evm/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-evm-
+
+      - name: Install Substreams CLI
+        run: |
+          curl -sSL -o substreams.tar.gz https://github.com/streamingfast/substreams/releases/download/v1.24.0/substreams_linux_x86_64.tar.gz
+          echo "8ed58a785c00657fb71c7bc390b781357cd13e415497e4b4f016a9e315d751a6  substreams.tar.gz" | sha256sum -c -
+          tar xzf substreams.tar.gz
+          sudo mv substreams /usr/local/bin/
+          substreams --version
+
+      - name: Package Substreams
+        working-directory: evm
+        run: make package
+
+      - name: Sink each known payment into Postgres, assert it, then replay and assert no duplicate
+        working-directory: evm
+        env:
+          PGPASSWORD: postgres
+          SUBSTREAMS_API_TOKEN: ${{ secrets.SUBSTREAMS_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          SPKG_FILE=request-network-evm-v0.1.0.spkg
+          COUNT=$(jq '.payments | length' testdata/known-payments.json)
+          if [ "$COUNT" -lt 1 ]; then
+            echo "ERROR: no fixtures in testdata/known-payments.json"
+            exit 1
+          fi
+
+          for i in $(seq 0 $((COUNT - 1))); do
+            f() { jq -r ".payments[$i].$1" testdata/known-payments.json; }
+            CHAIN=$(f chain)
+            NETWORK=$(f network)
+            ENDPOINT=$(f endpoint)
+            BLOCK=$(f block)
+            TX_HASH=$(f tx_hash)
+            LOG_INDEX=$(f log_index)
+            REFERENCE=$(f payment_reference)
+            AMOUNT=$(f amount)
+            TO_ADDRESS=$(f to_address)
+            # Postgres schema = request-api chain name with hyphens converted to underscores
+            SCHEMA=$(echo "$CHAIN" | tr '-' '_')
+            DSN="postgres://postgres:postgres@localhost:5432/payments?sslmode=disable&schemaName=$SCHEMA"
+
+            echo "=== $CHAIN ($NETWORK) block $BLOCK tx $TX_HASH ==="
+
+            # setup applies schema.sql inside schemaName but does not create the schema itself.
+            # psql rejects the schemaName URI option: connect without it and qualify tables.
+            psql -v ON_ERROR_STOP=1 -h localhost -U postgres -d payments -c "CREATE SCHEMA IF NOT EXISTS $SCHEMA"
+            substreams sink postgres setup "$SPKG_FILE" --dsn "$DSN"
+
+            # -t is exclusive, so BLOCK+1 includes BLOCK.
+            substreams sink postgres "$SPKG_FILE" --dsn "$DSN" \
+              -e "$ENDPOINT" --network "$NETWORK" -s "$BLOCK" -t "$((BLOCK + 1))"
+
+            ROW=$(psql -v ON_ERROR_STOP=1 -tA -h localhost -U postgres -d payments -c \
+              "SELECT tx_hash, payment_reference, amount, to_address, gas_used IS NOT NULL, log_index FROM $SCHEMA.payments WHERE tx_hash = '$TX_HASH' AND log_index = $LOG_INDEX")
+            EXPECTED="$TX_HASH|$REFERENCE|$AMOUNT|$TO_ADDRESS|t|$LOG_INDEX"
+            echo "row: $ROW"
+            if [ "$ROW" != "$EXPECTED" ]; then
+              echo "ERROR: expected [$EXPECTED], got [$ROW]"
+              exit 1
+            fi
+
+            DELETED=$(psql -v ON_ERROR_STOP=1 -tA -h localhost -U postgres -d payments -c \
+              "WITH d AS (DELETE FROM $SCHEMA.cursors RETURNING 1) SELECT count(*) FROM d")
+            if [ "$DELETED" != "1" ]; then
+              echo "ERROR: expected to delete exactly 1 cursor row, deleted [$DELETED]"
+              exit 1
+            fi
+
+            # Same range again: OPERATION_UPSERT must re-write the row in place (a plain INSERT
+            # would fail on the primary key).
+            substreams sink postgres "$SPKG_FILE" --dsn "$DSN" \
+              -e "$ENDPOINT" --network "$NETWORK" -s "$BLOCK" -t "$((BLOCK + 1))"
+
+            ROWS=$(psql -v ON_ERROR_STOP=1 -tA -h localhost -U postgres -d payments -c \
+              "SELECT count(*) FROM $SCHEMA.payments WHERE tx_hash = '$TX_HASH' AND log_index = $LOG_INDEX")
+            if [ "$ROWS" != "1" ]; then
+              echo "ERROR: expected exactly 1 row after the replay, found $ROWS"
+              exit 1
+            fi
+            echo "✅ $CHAIN: fixture row matched, replay kept exactly one row"
+          done
+
+  # Publish package artifact for download/deployment
+  publish-package:
+    name: Publish EVM Package
+    runs-on: ubuntu-latest
+    needs: [build-and-test, integration-test]
+    # Publish on: push to main (merge) or manual publish selection
+    if: |
+      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+      github.event.inputs.publish_package == 'true'
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.93.0
+          targets: wasm32-unknown-unknown
+
+      - name: Cache Cargo dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            evm/target/
+          key: ${{ runner.os }}-cargo-evm-${{ hashFiles('evm/Cargo.toml', 'evm/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-evm-
+
+      - name: Install Substreams CLI
+        run: |
+          curl -sSL -o substreams.tar.gz https://github.com/streamingfast/substreams/releases/download/v1.24.0/substreams_linux_x86_64.tar.gz
+          echo "8ed58a785c00657fb71c7bc390b781357cd13e415497e4b4f016a9e315d751a6  substreams.tar.gz" | sha256sum -c -
+          tar xzf substreams.tar.gz
+          sudo mv substreams /usr/local/bin/
+
+      - name: Package Substreams
+        working-directory: evm
+        run: make package
+
+      - name: Get package info
+        id: package_info
+        working-directory: evm
+        run: |
+          SPKG_FILE=$(ls -1 *.spkg 2>/dev/null | head -1)
+          if [ -z "$SPKG_FILE" ]; then
+            echo "ERROR: No .spkg package file found!"
+            exit 1
+          fi
+          echo "spkg_file=$SPKG_FILE" >> $GITHUB_OUTPUT
+
+          VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+          echo "Package created successfully: $SPKG_FILE (version: $VERSION)"
+
+      - name: Upload package artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: request-network-evm-${{ steps.package_info.outputs.version }}
+          path: evm/${{ steps.package_info.outputs.spkg_file }}
+          retention-days: 90

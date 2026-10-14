@@ -1,14 +1,36 @@
 name: Deploy to staging
 
+# FROZEN: redeploys the legacy Easypanel VM TRON sink (docker-compose.prod.yml). The automatic
+# trigger was removed so that a merge/release can never rebuild the VM sink during the REQ-390
+# cutover window; the sink now ships through image.yml + deploy-worker-pool.yml (GCP).
+# Manual runs only, and only with confirm_vm_redeploy=I_UNDERSTAND.
+#
+# The job runs in the `stage` GitHub Environment, so the typed input alone cannot redeploy
+# the VM. REPO ADMIN ACTION REQUIRED: give the `stage` Environment required reviewers, and
+# move EASYPANEL_DEPLOY_KEY_STAGING from repository secrets to that Environment's secrets
+# (environment scope), so the webhook key is only released to an approved run.
 on:
   workflow_dispatch:
-  push:
-    branches: [main]
+    inputs:
+      confirm_vm_redeploy:
+        description: 'Type I_UNDERSTAND to rebuild the frozen Easypanel VM sink'
+        required: true
+        type: string
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    environment: stage
     steps:
+      - name: Confirm VM redeploy
+        env:
+          CONFIRM: ${{ inputs.confirm_vm_redeploy }}
+        run: |
+          if [ "$CONFIRM" != "I_UNDERSTAND" ]; then
+            echo "::error::confirm_vm_redeploy must be I_UNDERSTAND; the VM sink is frozen (REQ-390 cutover)"
+            exit 1
+          fi
+
       - name: Webhook request
         run: |
           curl -X GET https://stage.request.network/api/compose/deploy/${{ secrets.EASYPANEL_DEPLOY_KEY_STAGING }}

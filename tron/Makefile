@@ -1,13 +1,21 @@
 .PHONY: build
 build:
-	cargo build --target wasm32-unknown-unknown --release
+	cargo build --locked --target wasm32-unknown-unknown --release
 
 .PHONY: protogen
 protogen:
 	substreams protogen ./substreams.yaml --exclude-paths="sf/substreams,google"
 
+.PHONY: sync-schema
+sync-schema:
+	cp ../schema.sql ./schema.sql
+
+.PHONY: check-schema
+check-schema:
+	diff -q ../schema.sql schema.sql
+
 .PHONY: package
-package: build
+package: sync-schema build
 	substreams pack ./substreams.yaml
 
 # Mainnet - uses Streamingfast TRON native endpoint
@@ -26,4 +34,8 @@ clean:
 
 .PHONY: test
 test:
-	cargo test
+	cargo test --locked
+
+.PHONY: clippy
+clippy:
+	cargo clippy --locked --target wasm32-unknown-unknown -- -D warnings

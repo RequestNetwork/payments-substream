@@ -1,0 +1,158 @@
+name: Sink Image
+
+# Builds Dockerfile.sink (both packages + the multi-chain supervisor), smoke-tests it, and on
+# main / tags pushes ghcr.io/requestnetwork/payments-substream:<sha> plus `main` or <tag>.
+# Pull requests build and smoke-test without pushing. No `latest` tag; deploying to GCP is
+# deploy-worker-pool.yml (manual).
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'Dockerfile.sink'
+      - 'sinks/**'
+      - 'schema.sql'
+      - 'tron/**'
+      - 'evm/**'
+      - 'rust-toolchain.toml'
+      - '.github/workflows/image.yml'
+  push:
+    branches:
+      - main
+    tags:
+      - 'v*'
+
+# Least privilege: pull-request runs (which execute the PR's own copy of this file) get a
+# read-only token; only the push-only `publish` job below is granted packages: write.
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  IMAGE: ghcr.io/requestnetwork/payments-substream
+  SMOKE_TAG: payments-substream:smoke
+
+jobs:
+  build-smoke:
+    name: Build and smoke-test sink image
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Build image (load for smoke test)
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: Dockerfile.sink
+          platforms: linux/amd64
+          load: true
+          push: false
+          tags: ${{ env.SMOKE_TAG }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Smoke - empty CHAINS fails with a JSON error line
+        run: |
+          set +e
+          out=$(docker run --rm -e CHAINS= "$SMOKE_TAG" 2>&1)
+          code=$?
+          set -e
+          echo "$out"
+          if [ "$code" -eq 0 ]; then
+            echo "::error::expected a non-zero exit with CHAINS empty"
+            exit 1
+          fi
+          echo "$out" | grep -q '^{.*"event":"sink_config_invalid".*"field":"CHAINS"'
+
+      - name: Smoke - pinned Substreams CLI version
+        run: |
+          version=$(docker run --rm --entrypoint substreams "$SMOKE_TAG" --version)
+          echo "$version"
+          echo "$version" | grep -q 'version 1\.24\.0 '
+
+  supervisor-tests:
+    name: Supervisor tests (stub CLI)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Lint supervisor, entrypoint and test scripts
+        run: |
+          shellcheck -x sinks/supervisor.sh sinks/tests/run-tests.sh sinks/tests/bin/substreams sinks/tests/bin/timeout
+          shellcheck -s sh sinks/entrypoint.sh sinks/healthcheck.sh
+
+      # Restart and backoff, setup retries, cursor sampling and bounded reads, finished replays,
+      # legacy DSN, duplicate chains and schemas, every override rule, and the DSN never in argv
+      # or logs. Exit status = number of failed checks.
+      - name: Run the stub-CLI harness
+        run: bash sinks/tests/run-tests.sh
+
+  publish:
+    name: Push sink image
+    # Pushes to main and v* tags only; never on pull requests.
+    if: github.event_name == 'push'
+    needs: [build-smoke, supervisor-tests]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Image metadata
+        id: meta
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
+        with:
+          images: ${{ env.IMAGE }}
+          flavor: |
+            latest=false
+          tags: |
+            type=sha,format=long,prefix=
+            type=raw,value=main,enable=${{ github.ref == 'refs/heads/main' }}
+            type=ref,event=tag
+
+      - name: Log in to GHCR
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Push image
+        id: push
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: Dockerfile.sink
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+
+      - name: Record the pushed digest
+        env:
+          DIGEST: ${{ steps.push.outputs.digest }}
+        run: |
+          # deploy-worker-pool.yml deploys by digest; this is the immutable reference to review.
+          {
+            echo "### Pushed \`$IMAGE\`"
+            echo
+            echo "Digest: \`$DIGEST\`"
+          } >> "$GITHUB_STEP_SUMMARY"

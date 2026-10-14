@@ -1,0 +1,83 @@
+# Per-chain EVM ERC20FeeProxy indexing config for the slim D' Substreams -> Postgres pull.
+#
+# No endpoints and no tokens here (those are provider/token concerns, set per chain in
+# sinks/chains.env and never committed to this repo -- see docs/contract.md).
+#
+# Fields:
+#   schema               Postgres schema the sink writes into (DSN schemaName=, request-api
+#                         chain name with hyphens converted to underscores)
+#   request_api_chain    chain identifier used by request-api (src/constants/chains.ts
+#                         PayeeDestinationNetworkName) and in PAYMENTS_SOURCE_<CHAIN>
+#   substreams_network   `network:` value used by the Substreams endpoint for this chain
+#   initial_block        lowest ERC20FeeProxy deployment block across the addresses below
+#   addresses            ERC20FeeProxy contract addresses to filter on (lowercase 0x); an
+#                         indexer must filter on address AND topic0 -- delegatecalling
+#                         contracts (conversion proxy, escrow, transferable receivable) emit
+#                         the same topic0 and stay on Hasura
+#   topic0                TransferWithReferenceAndFee(address,address,uint256,bytes,uint256,address)
+#                         event signature hash (same for every chain)
+
+chains:
+  mainnet:
+    schema: mainnet
+    request_api_chain: mainnet
+    substreams_network: mainnet
+    initial_block: 10774767
+    addresses:
+      - "0x370de27fdb7d1ff1e1baa7d11c5820a324cf623c"
+    topic0: "0x9f16cbcc523c67a60c450e5ffe4f3b7b6dbe772e7abcadb2686ce029a9a0a2b6"
+
+  matic:
+    schema: matic
+    request_api_chain: matic
+    substreams_network: polygon
+    initial_block: 14163521
+    addresses:
+      - "0x2171a0dc12a9e5b1659fef2bb20e54c84fa7db0c"
+      - "0x0dfbee143b42b41efc5a6f87bfd1ffc78c2f0ac9"
+    topic0: "0x9f16cbcc523c67a60c450e5ffe4f3b7b6dbe772e7abcadb2686ce029a9a0a2b6"
+
+  bsc:
+    schema: bsc
+    request_api_chain: bsc
+    substreams_network: bsc
+    initial_block: 11540173
+    addresses:
+      - "0x0dfbee143b42b41efc5a6f87bfd1ffc78c2f0ac9"
+    topic0: "0x9f16cbcc523c67a60c450e5ffe4f3b7b6dbe772e7abcadb2686ce029a9a0a2b6"
+
+  arbitrum-one:
+    schema: arbitrum_one
+    request_api_chain: arbitrum-one
+    substreams_network: arbitrum-one
+    initial_block: 5309741
+    addresses:
+      - "0x0dfbee143b42b41efc5a6f87bfd1ffc78c2f0ac9"
+    topic0: "0x9f16cbcc523c67a60c450e5ffe4f3b7b6dbe772e7abcadb2686ce029a9a0a2b6"
+
+  base:
+    schema: base
+    request_api_chain: base
+    substreams_network: base
+    initial_block: 10827274
+    addresses:
+      - "0x1892196e80c4c17ea5100da765ab48c1fe2fb814"
+    topic0: "0x9f16cbcc523c67a60c450e5ffe4f3b7b6dbe772e7abcadb2686ce029a9a0a2b6"
+
+  optimism:
+    schema: optimism
+    request_api_chain: optimism
+    substreams_network: optimism
+    initial_block: 34638633
+    addresses:
+      - "0x399f5ee127ce7432e4921a61b8cf52b0af52cbfe"
+    topic0: "0x9f16cbcc523c67a60c450e5ffe4f3b7b6dbe772e7abcadb2686ce029a9a0a2b6"
+
+  sepolia:
+    schema: sepolia
+    request_api_chain: sepolia
+    substreams_network: sepolia
+    initial_block: 4733364
+    addresses:
+      - "0x399f5ee127ce7432e4921a61b8cf52b0af52cbfe"
+    topic0: "0x9f16cbcc523c67a60c450e5ffe4f3b7b6dbe772e7abcadb2686ce029a9a0a2b6"

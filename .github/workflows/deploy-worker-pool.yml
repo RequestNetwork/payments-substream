@@ -1,0 +1,160 @@
+name: Deploy Sink Worker Pool
+
+# Manually rolls a sink image out to a Cloud Run worker pool:
+#   GHCR ghcr.io/requestnetwork/payments-substream:<image_tag> (built by image.yml)
+#   -> Artifact Registry us-central1-docker.pkg.dev/<project>/request-docker/payments-substream:<image_tag>
+#   -> gcloud run worker-pools update payments-substream[-replay]-<environment> --image=...
+#
+# Prerequisites a human must set up (this workflow never creates infrastructure):
+#   - Repository secrets (names only; values live in GitHub settings):
+#       GCP_WIF_PROVIDER  Workload Identity Federation provider resource name
+#       GCP_SA_EMAIL      deployer service account email
+#       GCP_PROJECT_ID    GCP project hosting the worker pools and Artifact Registry
+#   - The worker pool must already exist: it is created by request-infrastructure Terraform with
+#     payments_sink_enabled=true. Terraform owns its env (CHAINS, secrets) and instance count;
+#     this workflow only changes the image and never passes --instances.
+#   - GitHub Environments `stage` and `production` (Settings -> Environments). The job runs in the
+#     environment named by the `environment` input, so `production` MUST be configured with
+#     required reviewers (and deployment branches limited to main); move the three GCP_* secrets
+#     to environment-scoped secrets there so they are only released to an approved run.
+#   - The image is deployed by its immutable Artifact Registry digest, never by a mutable tag.
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Target environment'
+        required: true
+        type: choice
+        options:
+          - stage
+          - production
+      pool:
+        description: 'Worker pool: live (payments-substream-<env>) or replay (payments-substream-replay-<env>)'
+        required: true
+        type: choice
+        options:
+          - live
+          - replay
+      image_tag:
+        description: 'GHCR image tag to deploy (full commit sha, main, or a release tag)'
+        required: true
+        type: string
+
+permissions:
+  id-token: write
+  contents: read
+  packages: read
+
+concurrency:
+  group: deploy-worker-pool-${{ inputs.environment }}-${{ inputs.pool }}
+  cancel-in-progress: false
+
+env:
+  REGION: us-central1
+  SOURCE_IMAGE: ghcr.io/requestnetwork/payments-substream
+
+jobs:
+  deploy:
+    name: Deploy ${{ inputs.pool }} pool to ${{ inputs.environment }}
+    runs-on: ubuntu-latest
+    # Required reviewers / branch rules / environment-scoped secrets of this GitHub Environment
+    # gate every deploy (see the header).
+    environment: ${{ inputs.environment }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Resolve names
+        id: names
+        env:
+          ENVIRONMENT: ${{ inputs.environment }}
+          POOL: ${{ inputs.pool }}
+          IMAGE_TAG: ${{ inputs.image_tag }}
+          PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+        run: |
+          if ! [[ "$IMAGE_TAG" =~ ^[A-Za-z0-9_][A-Za-z0-9._-]{0,127}$ ]]; then
+            echo "::error::image_tag is not a valid image tag"
+            exit 1
+          fi
+          if [ "$POOL" = replay ]; then
+            pool_name="payments-substream-replay-$ENVIRONMENT"
+          else
+            pool_name="payments-substream-$ENVIRONMENT"
+          fi
+          {
+            echo "pool_name=$pool_name"
+            echo "source_image=$SOURCE_IMAGE:$IMAGE_TAG"
+            echo "target_image=$REGION-docker.pkg.dev/$PROJECT_ID/request-docker/payments-substream:$IMAGE_TAG"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}
+          service_account: ${{ secrets.GCP_SA_EMAIL }}
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3.0.1
+
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker "$REGION-docker.pkg.dev" --quiet
+
+      - name: Log in to GHCR
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ACTOR: ${{ github.actor }}
+        run: echo "$GITHUB_TOKEN" | docker login ghcr.io -u "$ACTOR" --password-stdin
+
+      - name: Copy image from GHCR to Artifact Registry
+        id: copy
+        env:
+          SOURCE: ${{ steps.names.outputs.source_image }}
+          TARGET: ${{ steps.names.outputs.target_image }}
+        run: |
+          docker pull "$SOURCE"
+          docker tag "$SOURCE" "$TARGET"
+          docker push "$TARGET"
+          # Resolve the immutable digest Artifact Registry stored, and deploy by it.
+          repo_digest=$(docker inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' "$TARGET" \
+            | grep -F "${TARGET%:*}@" | head -n1)
+          if ! [[ "$repo_digest" =~ @sha256:[0-9a-f]{64}$ ]]; then
+            echo "::error::could not resolve the pushed image digest"
+            exit 1
+          fi
+          echo "image_by_digest=$repo_digest" >> "$GITHUB_OUTPUT"
+
+      - name: Update worker pool image
+        env:
+          POOL_NAME: ${{ steps.names.outputs.pool_name }}
+          IMAGE_BY_DIGEST: ${{ steps.copy.outputs.image_by_digest }}
+          PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+        run: |
+          # Image only, by digest: Terraform owns the pool's env and instance count
+          # (never pass --instances).
+          gcloud run worker-pools update "$POOL_NAME" \
+            --image="$IMAGE_BY_DIGEST" \
+            --region="$REGION" \
+            --project="$PROJECT_ID"
+
+      - name: Describe worker pool
+        env:
+          POOL_NAME: ${{ steps.names.outputs.pool_name }}
+          PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+          IMAGE_TAG: ${{ inputs.image_tag }}
+          IMAGE_BY_DIGEST: ${{ steps.copy.outputs.image_by_digest }}
+        run: |
+          # Images and conditions only -- never dump the pool's env into the summary.
+          desc=$(gcloud run worker-pools describe "$POOL_NAME" \
+            --region="$REGION" --project="$PROJECT_ID" --format=json)
+          {
+            echo "### Worker pool \`$POOL_NAME\`"
+            echo
+            echo "Deployed tag: \`$IMAGE_TAG\` as \`$IMAGE_BY_DIGEST\`"
+            echo
+            echo '```json'
+            echo "$desc" | jq '{images: [.. | objects | select(has("image")) | .image] | unique,
+              conditions: [.. | objects | select(has("conditions")) | .conditions[]?
+                | {type, state: (.state // .status), message}]}'
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

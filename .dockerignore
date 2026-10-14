@@ -1,0 +1,7 @@
+# Keep the build context small and free of local state/secrets.
+**/target/
+**/*.spkg
+**/replay.log
+.git
+.env*
+.claude

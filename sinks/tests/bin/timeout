@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+# coreutils-style `timeout [--kill-after=N] <seconds> <cmd...>` (macOS has none). The command runs
+# in its own process group; at the limit the group gets TERM (exit 124), and KILL after the grace
+# period if it is still running (exit 137), as coreutils does.
+grace=''
+case ${1:-} in --kill-after=*) grace=${1#--kill-after=}; shift ;; esac
+secs=$1; shift
+exec perl -e '
+  my ($s, $g) = (shift, shift);
+  my $pid = fork;
+  if (!$pid) { setpgrp(0, 0); exec @ARGV or exit 127 }
+  # Wait for the child for at most $t seconds; true if it exited in time.
+  sub wait_for { my $t = shift;
+    my $ok = eval { local $SIG{ALRM} = sub { die "alarm\n" }; alarm $t; waitpid($pid, 0); alarm 0; 1 };
+    return $ok }
+  exit($? >> 8) if wait_for($s);
+  kill "TERM", -$pid;
+  if ($g eq "") { waitpid($pid, 0); exit 124 }
+  exit 124 if wait_for($g);
+  kill "KILL", -$pid; waitpid($pid, 0); exit 137' "$secs" "$grace" "$@"

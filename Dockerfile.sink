@@ -11,7 +11,7 @@ ARG SUBSTREAMS_SHA256_AMD64=8ed58a785c00657fb71c7bc390b781357cd13e415497e4b4f016
 ARG SUBSTREAMS_SHA256_ARM64=a2bb55dd752830177f0bc4e27a4ab71ea2a443ef4a11c1af85db671af975924b
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates \
+    ca-certificates=20250419~deb12u2 \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
@@ -55,7 +55,7 @@ FROM ubuntu:22.04@sha256:5ec03bb3441e8b0bf3b4f9cd4629a1ae763010dc3035bb8da3ae6cf
 # ca-certificates for gRPC/TLS, procps for the healthcheck. postgresql-client is only for humans
 # debugging with the base DSN (psql rejects a DSN carrying schemaName=); the supervisor never uses it.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates \
+    ca-certificates=20260816ubuntu0.22.04.1 \
     postgresql-client \
     procps \
     && rm -rf /var/lib/apt/lists/*

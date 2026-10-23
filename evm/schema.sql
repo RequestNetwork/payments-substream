@@ -18,8 +18,8 @@
 --     it existed, set once, never updated on conflict; an arrival cursor, not a block cursor;
 --     gaps are normal. A value is allocated at insert but becomes visible at commit, so while
 --     two writers overlap on one schema (e.g. a pool rollout) a lower value can commit after a
---     higher one: readers must not treat max(inbox_seq) as an exact high-water mark (re-read a
---     margin below the last position and keep the reference sweep; see docs/contract.md)
+--     higher one: readers must not treat max(inbox_seq) as a high-water mark; they advance only
+--     up to a transaction-visibility horizon and keep the reference sweep (see docs/contract.md)
 --
 -- Identity:
 --   the physical primary key is `id` (TEXT)

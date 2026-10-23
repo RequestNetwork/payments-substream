@@ -30,14 +30,16 @@ byte-identical copies (`make sync-schema` / `make check-schema` in `evm/` and `t
   rows by reference. Partial index `idx_payments_inbox_seq`.
   - **Visibility is not strictly ordered.** A value is allocated when the row is inserted but only
     becomes visible when its transaction commits. With one sink writing a schema (the normal state;
-    a block is one transaction) commits land in `inbox_seq` order, but nothing enforces a single
-    writer: while two sink processes overlap on one schema, for example during a worker-pool
-    rollout, a lower value can commit after a higher one, and a fixed numeric margin does not bound
-    how long the older transaction stays open. Readers must therefore not advance past
-    `max(inbox_seq)` or a fixed margin below it. Advance only up to a visibility horizon: rows
-    whose inserting transaction is older than the oldest transaction still in progress (compare
-    the row's `xmin` with `pg_snapshot_xmin(pg_current_snapshot())`). Make re-reads idempotent on
-    `(chain, tx_hash, log_index)` and keep the periodic reference sweep as the backstop.
+    a block is one transaction) commits land in `inbox_seq` order, so a cursor over it is gap-free.
+    Nothing enforces a single writer, though: while two sink processes overlap on one schema, for
+    example during a worker-pool rollout, a transaction still in progress can hold a lower value
+    than rows that are already committed, and no filter a reader can apply to visible rows (a
+    numeric margin, or comparing each row's `xmin` with the snapshot horizon) reveals that hidden
+    value. A consumer must therefore not treat `inbox_seq` as gap-free while writers can overlap:
+    make re-reads idempotent on `(chain, tx_hash, log_index)`, re-scan behind the position already
+    consumed, and keep the periodic reference sweep as the completeness backstop. A gap-free
+    boundary under overlapping writers needs single-writer enforcement or a commit-ordered source;
+    that is decided with the consumer (REQ-823), not here.
 
 ## Identity
 

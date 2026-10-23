@@ -212,6 +212,13 @@ jobs:
               exit 1
             fi
 
+            SEQ1=$(psql -v ON_ERROR_STOP=1 -tA -h localhost -U postgres -d payments -c \
+              "SELECT inbox_seq FROM $SCHEMA.payments WHERE tx_hash = '$TX_HASH' AND log_index = $LOG_INDEX")
+            if [ -z "$SEQ1" ]; then
+              echo "ERROR: inbox_seq is empty on the freshly sunk row"
+              exit 1
+            fi
+
             DELETED=$(psql -v ON_ERROR_STOP=1 -tA -h localhost -U postgres -d payments -c \
               "WITH d AS (DELETE FROM $SCHEMA.cursors RETURNING 1) SELECT count(*) FROM d")
             if [ "$DELETED" != "1" ]; then
@@ -230,7 +237,14 @@ jobs:
               echo "ERROR: expected exactly 1 row after the replay, found $ROWS"
               exit 1
             fi
-            echo "✅ $CHAIN: fixture row matched, replay kept exactly one row"
+
+            SEQ2=$(psql -v ON_ERROR_STOP=1 -tA -h localhost -U postgres -d payments -c \
+              "SELECT inbox_seq FROM $SCHEMA.payments WHERE tx_hash = '$TX_HASH' AND log_index = $LOG_INDEX")
+            if [ "$SEQ2" != "$SEQ1" ]; then
+              echo "ERROR: inbox_seq changed on replay, was [$SEQ1] now [$SEQ2]"
+              exit 1
+            fi
+            echo "✅ $CHAIN: fixture row matched, replay kept exactly one row and inbox_seq $SEQ1"
           done
 
   # Publish package artifact for download/deployment

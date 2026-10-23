@@ -32,9 +32,12 @@ byte-identical copies (`make sync-schema` / `make check-schema` in `evm/` and `t
     becomes visible when its transaction commits. With one sink writing a schema (the normal state;
     a block is one transaction) commits land in `inbox_seq` order, but nothing enforces a single
     writer: while two sink processes overlap on one schema, for example during a worker-pool
-    rollout, a lower value can commit after a higher one. Readers must not treat `max(inbox_seq)`
-    as an exact high-water mark: re-read a safety margin below the last position seen (or gate on
-    transaction visibility) and keep the periodic reference sweep as the backstop.
+    rollout, a lower value can commit after a higher one, and a fixed numeric margin does not bound
+    how long the older transaction stays open. Readers must therefore not advance past
+    `max(inbox_seq)` or a fixed margin below it. Advance only up to a visibility horizon: rows
+    whose inserting transaction is older than the oldest transaction still in progress (compare
+    the row's `xmin` with `pg_snapshot_xmin(pg_current_snapshot())`). Make re-reads idempotent on
+    `(chain, tx_hash, log_index)` and keep the periodic reference sweep as the backstop.
 
 ## Identity
 

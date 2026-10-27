@@ -120,8 +120,9 @@ for pair in $PAIRS; do
   amount=$(psql_q "SELECT amount FROM $schema.payments WHERE id = 'probe-1'")
   [ "$amount" = 2 ] || fail "$schema: upsert did not update amount (got $amount)"
   second=$(insert_probe "$schema" "probe-2" 1)
-  [ -n "$second" ] && [ "$second" -gt "$first" ] \
-    || fail "$schema: second row inbox_seq [$second] is not greater than [$first]"
+  if [ -z "$second" ] || [ "$second" -le "$first" ]; then
+    fail "$schema: second row inbox_seq [$second] is not greater than [$first]"
+  fi
   echo "probe: probe-1=$first (kept on upsert: $again), probe-2=$second"
 done
 

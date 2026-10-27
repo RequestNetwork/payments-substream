@@ -78,6 +78,11 @@ jobs:
           echo "$version"
           echo "$version" | grep -q 'version 1\.24\.0 '
 
+      # setup run twice per package on Postgres 17 (schema.sql idempotent), then inbox_seq (REQ-811)
+      # defaults from each schema's own sequence and survives an upsert. No API token needed.
+      - name: Smoke - sink setup is idempotent and binds inbox_seq per schema
+        run: bash sinks/tests/check-sink-setup.sh "$SMOKE_TAG"
+
   supervisor-tests:
     name: Supervisor tests (stub CLI)
     runs-on: ubuntu-latest
@@ -89,7 +94,7 @@ jobs:
 
       - name: Lint supervisor, entrypoint and test scripts
         run: |
-          shellcheck -x sinks/supervisor.sh sinks/tests/run-tests.sh sinks/tests/bin/substreams sinks/tests/bin/timeout
+          shellcheck -x sinks/supervisor.sh sinks/tests/run-tests.sh sinks/tests/check-sink-setup.sh sinks/tests/bin/substreams sinks/tests/bin/timeout
           shellcheck -s sh sinks/entrypoint.sh sinks/healthcheck.sh
 
       # Restart and backoff, setup retries, cursor sampling and bounded reads, finished replays,

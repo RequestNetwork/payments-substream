@@ -145,6 +145,36 @@ jobs:
           PGPASSWORD: postgres
         run: psql -v ON_ERROR_STOP=1 -h localhost -U postgres -d payments -f schema.sql
 
+      - name: Assert inbox_seq column, sequence and partial index
+        env:
+          PGPASSWORD: postgres
+        run: |
+          COL=$(psql -v ON_ERROR_STOP=1 -tA -h localhost -U postgres -d payments -c \
+            "SELECT data_type || '|' || is_nullable || '|' || (column_default LIKE 'nextval(%payments_inbox_seq%')::text FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'payments' AND column_name = 'inbox_seq'")
+          if [ "$COL" != "bigint|YES|true" ]; then
+            echo "ERROR: expected inbox_seq bigint|YES|true (nextval default), got [$COL]"
+            exit 1
+          fi
+          SEQ_KIND=$(psql -v ON_ERROR_STOP=1 -tA -h localhost -U postgres -d payments -c \
+            "SELECT c.relkind FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'public' AND c.relname = 'payments_inbox_seq'")
+          if [ "$SEQ_KIND" != "S" ]; then
+            echo "ERROR: expected sequence payments_inbox_seq (relkind S), got [$SEQ_KIND]"
+            exit 1
+          fi
+          IDX_KIND=$(psql -v ON_ERROR_STOP=1 -tA -h localhost -U postgres -d payments -c \
+            "SELECT c.relkind FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'public' AND c.relname = 'idx_payments_inbox_seq'")
+          if [ "$IDX_KIND" != "i" ]; then
+            echo "ERROR: expected index idx_payments_inbox_seq (relkind i), got [$IDX_KIND]"
+            exit 1
+          fi
+          LEGACY_NULL=$(psql -v ON_ERROR_STOP=1 -tA -h localhost -U postgres -d payments -c \
+            "SELECT inbox_seq IS NULL FROM payments WHERE id = 'legacy:1'")
+          if [ "$LEGACY_NULL" != "t" ]; then
+            echo "ERROR: legacy row should have NULL inbox_seq, got is-null=[$LEGACY_NULL]"
+            exit 1
+          fi
+          echo "inbox_seq column, sequence and partial index present; legacy row inbox_seq is NULL"
+
       - name: Assert gas columns were added to the legacy table and its row survived
         env:
           PGPASSWORD: postgres
@@ -173,11 +203,23 @@ jobs:
           ON CONFLICT (id) DO UPDATE SET amount = EXCLUDED.amount;
           SQL
 
+          SEQ1=$(psql -v ON_ERROR_STOP=1 -tA -h localhost -U postgres -d payments -c "SELECT inbox_seq FROM payments WHERE id = 'probe:1'")
+          if [ -z "$SEQ1" ]; then
+            echo "ERROR: inbox_seq is empty on the freshly inserted probe:1"
+            exit 1
+          fi
+
           psql -v ON_ERROR_STOP=1 -h localhost -U postgres -d payments <<'SQL'
           INSERT INTO payments (id, chain, tx_hash, block_number, timestamp, contract_address, token_address, from_address, to_address, amount, fee_amount, fee_address, payment_reference, log_index)
           VALUES ('probe:1', 'probe', '0xprobetx', 1, 1, '0xcontract', '0xtoken', '0xfrom', '0xto', 100, 1, '0xfeeaddr', '0xref', 0)
           ON CONFLICT (id) DO UPDATE SET amount = EXCLUDED.amount;
           SQL
+
+          SEQ2=$(psql -v ON_ERROR_STOP=1 -tA -h localhost -U postgres -d payments -c "SELECT inbox_seq FROM payments WHERE id = 'probe:1'")
+          if [ "$SEQ2" != "$SEQ1" ]; then
+            echo "ERROR: inbox_seq changed on ON CONFLICT DO UPDATE, was [$SEQ1] now [$SEQ2]"
+            exit 1
+          fi
 
           ROW_COUNT=$(psql -tA -h localhost -U postgres -d payments -c "SELECT count(*) FROM payments WHERE id = 'probe:1'")
           AMOUNT=$(psql -tA -h localhost -U postgres -d payments -c "SELECT amount FROM payments WHERE id = 'probe:1'")
@@ -185,7 +227,31 @@ jobs:
             echo "ERROR: expected exactly one row with amount 100, got count=$ROW_COUNT amount=$AMOUNT"
             exit 1
           fi
-          echo "Upsert probe passed: one row, amount=$AMOUNT"
+
+          psql -v ON_ERROR_STOP=1 -h localhost -U postgres -d payments <<'SQL'
+          INSERT INTO payments (id, chain, tx_hash, block_number, timestamp, contract_address, token_address, from_address, to_address, amount, fee_amount, fee_address, payment_reference, log_index)
+          VALUES ('legacy:1', 'tron', 'legacytx', 1, 1, '0xcontract', '0xtoken', '0xfrom', '0xto', 43, 1, '0xfeeaddr', '0xref', 0)
+          ON CONFLICT (id) DO UPDATE SET amount = EXCLUDED.amount;
+          SQL
+
+          LEGACY_SEQ=$(psql -v ON_ERROR_STOP=1 -tA -h localhost -U postgres -d payments -c "SELECT inbox_seq FROM payments WHERE id = 'legacy:1'")
+          if [ -n "$LEGACY_SEQ" ]; then
+            echo "ERROR: legacy row inbox_seq should stay NULL after upsert, got [$LEGACY_SEQ]"
+            exit 1
+          fi
+
+          psql -v ON_ERROR_STOP=1 -h localhost -U postgres -d payments <<'SQL'
+          INSERT INTO payments (id, chain, tx_hash, block_number, timestamp, contract_address, token_address, from_address, to_address, amount, fee_amount, fee_address, payment_reference, log_index)
+          VALUES ('probe:2', 'probe', '0xprobetx2', 1, 1, '0xcontract', '0xtoken', '0xfrom', '0xto', 1, 1, '0xfeeaddr', '0xref', 0)
+          ON CONFLICT (id) DO UPDATE SET amount = EXCLUDED.amount;
+          SQL
+
+          SEQ3=$(psql -v ON_ERROR_STOP=1 -tA -h localhost -U postgres -d payments -c "SELECT inbox_seq FROM payments WHERE id = 'probe:2'")
+          if [ -z "$SEQ3" ] || [ "$SEQ3" -le "$SEQ1" ]; then
+            echo "ERROR: expected probe:2 inbox_seq > $SEQ1, got [$SEQ3]"
+            exit 1
+          fi
+          echo "Upsert probe passed: one row, amount=$AMOUNT, inbox_seq stable at $SEQ1, legacy NULL, new row $SEQ3"
 
   integration-test-mainnet:
     name: Integration Test (Mainnet)

@@ -43,6 +43,13 @@ The schema is selected with the sink DSN option `schemaName=<schema>`, because t
 keyed by block number only (no chain column) -- mixing chains into one schema would corrupt
 cursor/revert bookkeeping across chains.
 
+Second provider pool: one physical schema has exactly one writer. The same chain may run in the
+live pool (schema `<chain>`) and in the Pinax pool (schema `<chain>_pinax`, set with
+`SINK_SCHEMA_<CHAIN>=<chain>_pinax` and `SINK_ENDPOINT_<CHAIN>` equal to the chain's
+`<CHAIN>_PINAX_ENDPOINT` from `sinks/chains.env`). An image older than this contract rejects
+every chain of a Pinax pool and exits 1, so it can never write a primary schema. `optimism` and
+`tron` have no Pinax endpoint and therefore no Pinax schema.
+
 ## Verified ERC20FeeProxy deployments
 
 All chains share one `topic0`:
@@ -117,7 +124,9 @@ never trace the DSN or run code. A new variable must be added to that allow-list
 
 `sinks/chains.env` holds the per-chain DEFAULTS, named `<CHAIN>_<FIELD>` (chain first, the reverse
 of the `SINK_<FIELD>_<CHAIN>` runtime overrides): `<CHAIN>_ENDPOINT`, `<CHAIN>_NETWORK`,
-`<CHAIN>_SCHEMA`, `<CHAIN>_SPKG`, `<CHAIN>_TOKEN_ENV`. Module params have no default in
+`<CHAIN>_SCHEMA`, `<CHAIN>_SPKG`, `<CHAIN>_TOKEN_ENV`, plus `<CHAIN>_PINAX_ENDPOINT` (only for
+mainnet, sepolia, matic, arbitrum-one, bsc and base; read from `sinks/chains.env` alone, never
+from the environment or a `SINK_` override). Module params have no default in
 `sinks/chains.env`: they come from the manifests (the `params:` block of `tron/substreams.yaml`;
 the per-network `networks:` section of `evm/substreams.yaml`, selected with `--network`), and
 there is no params override (see "Supervisor behaviour"). For each of those fields the supervisor
@@ -152,7 +161,8 @@ would only add a value that can drift.
   `sink_config_invalid{chain:null, field:"CHAINS", reason:"legacy DSN supports tron only"}`.
   Two chains that resolve to the same schema are also fatal for both:
   `sink_config_invalid{chain:null, field:"SCHEMA", reason:"duplicate schema"}`, exit 1.
-  Per-chain config errors still skip only that chain; the supervisor exits 1 only when no chain
+  Per-chain config errors still skip only that chain, except the `SCHEMA` errors below and any
+  error in a Pinax pool, which are fatal; otherwise the supervisor exits 1 only when no chain
   has a valid configuration.
 - Per-chain override validation (each failure logs `sink_config_invalid{chain, field, message}`
   and skips only that chain):
@@ -166,8 +176,17 @@ would only add a value that can drift.
     packages are read from paths fixed relative to the supervisor (`/app` in the image), never
     from the environment.
   - `SCHEMA`: with `SUBSTREAMS_SINK_DSN`, a `SINK_SCHEMA_<CHAIN>` override must equal the chain's
-    `<CHAIN>_SCHEMA` in `sinks/chains.env` (a chain never writes another chain's schema). The
-    legacy `DSN`-only layout (`public`) is exempt.
+    `<CHAIN>_SCHEMA` in `sinks/chains.env` (a chain never writes another chain's schema) or, for a
+    chain with a `<CHAIN>_PINAX_ENDPOINT`, `<CHAIN>_SCHEMA` plus `_pinax` with
+    `SINK_ENDPOINT_<CHAIN>` equal to that Pinax endpoint. Any other value, a `_pinax` override
+    under the legacy `DSN`, and a pool mixing `_pinax` and primary schemas
+    (`sink_config_invalid{chain:null, field:"SCHEMA", reason:"mixed _pinax and primary schemas in
+    one pool"}`) are fatal: exit 1, no child started, unlike other per-chain errors. In a Pinax
+    pool (any override ending in `_pinax`) every per-chain error is fatal too, and no
+    `substreams` call runs until every chain has passed validation: a Pinax pool never runs a
+    subset of its chains. The legacy `DSN`-only layout (`public`) is otherwise exempt.
+  - `START_BLOCK`: `SINK_START_BLOCK_<CHAIN>`, when set, must be an integer (`^-?[0-9]+$`).
+  - `STOP_BLOCK`: `SINK_STOP_BLOCK_<CHAIN>`, when set, must be an absolute block or a relative `+N` (`^\+?[0-9]+$`).
   - `PARAMS`: `SINK_PARAMS_<CHAIN>` is rejected for every chain. The chain label, contract
     addresses and TRON proxy come from the manifest only. An override could only point the module
     at another contract, and it would change the module hash the progress sampler reads.

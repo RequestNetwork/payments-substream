@@ -314,5 +314,122 @@ eval "$(sed -n '/^json_str() {/,/^}/p' "$SUP")"
 line=$(log INFO probe a 020 b 7 c -1 d 0)
 python3 -c 'import json,sys; o=json.loads(sys.argv[1]); assert o["a"]=="020" and o["b"]==7 and o["c"]==-1 and o["d"]==0' "$line" && pass "K4 log emits zero-padded values as strings, integers as numbers" || fail "K4 log line: $line"
 
+echo "=== P. Pinax pool: <schema>_pinax only on the chain's Pinax endpoint, fail closed"
+PINAX_SIX=('CHAINS=mainnet,sepolia,matic,arbitrum-one,bsc,base'
+  SINK_SCHEMA_MAINNET=mainnet_pinax SINK_ENDPOINT_MAINNET=eth.substreams.pinax.network:443
+  SINK_SCHEMA_SEPOLIA=sepolia_pinax SINK_ENDPOINT_SEPOLIA=sepolia.substreams.pinax.network:443
+  SINK_SCHEMA_MATIC=matic_pinax SINK_ENDPOINT_MATIC=polygon.substreams.pinax.network:443
+  SINK_SCHEMA_ARBITRUM_ONE=arbitrum_one_pinax SINK_ENDPOINT_ARBITRUM_ONE=arbone.substreams.pinax.network:443
+  SINK_SCHEMA_BSC=bsc_pinax SINK_ENDPOINT_BSC=bsc.substreams.pinax.network:443
+  SINK_SCHEMA_BASE=base_pinax SINK_ENDPOINT_BASE=base.substreams.pinax.network:443)
+PINAX_BASE=(SINK_SCHEMA_BASE=base_pinax SINK_ENDPOINT_BASE=base.substreams.pinax.network:443)
+# no_child <case>: neither setup nor the sink ever ran.
+no_child() {
+  [ -s "$STUB_DIR/sink_runs.log" ] || [ -s "$STUB_DIR/setup_ok.log" ] && fail "$1 started a child" || pass "$1 no setup, no sink"
+}
+new_case P1
+run_sup 2 CHAINS=base SUBSTREAMS_SINK_DSN=$DSNV "${PINAX_BASE[@]}" SINK_PROGRESS_INTERVAL_SECONDS=1
+expect -eq 1 '"event":"sink_started","chain":"base".*"schema":"base_pinax"' "$LOG" "P1 base runs in base_pinax"
+expect -eq 0 sink_config_invalid "$LOG" "P1 no config error"
+expect -ge 1 'schemaName=base_pinax$' "$STUB_DIR/dsn_env.log" "P1 DSN carries schemaName=base_pinax"
+expect -eq 0 'schemaName=base$' "$STUB_DIR/dsn_env.log" "P1 DSN never carries schemaName=base"
+new_case P2
+run_sup 3 SUBSTREAMS_SINK_DSN=$DSNV "${PINAX_SIX[@]}" SINK_PROGRESS_INTERVAL_SECONDS=1
+expect -eq 6 '"event":"sink_started"' "$LOG" "P2 six Pinax chains started"
+expect -eq 0 'duplicate schema' "$LOG" "P2 no duplicate schema"
+expect -eq 0 sink_config_invalid "$LOG" "P2 no config error"
+for s in mainnet sepolia matic arbitrum_one bsc base; do
+  expect -eq 1 "\"event\":\"sink_started\".*\"schema\":\"${s}_pinax\"" "$LOG" "P2 $s runs in ${s}_pinax"
+  expect -ge 1 "schemaName=${s}_pinax\$" "$STUB_DIR/dsn_env.log" "P2 DSN carries schemaName=${s}_pinax"
+  expect -eq 0 "schemaName=${s}\$" "$STUB_DIR/dsn_env.log" "P2 DSN never carries schemaName=${s}"
+done
+reject P3 SCHEMA 'only base or base_pinax' CHAINS=base SUBSTREAMS_SINK_DSN=$DSNV SINK_SCHEMA_BASE=base_pinaxx
+reject P4 SCHEMA 'only base or base_pinax' CHAINS=base SUBSTREAMS_SINK_DSN=$DSNV SINK_SCHEMA_BASE=mainnet_pinax
+reject P5 SCHEMA 'no Pinax endpoint' CHAINS=optimism SUBSTREAMS_SINK_DSN=$DSNV SINK_SCHEMA_OPTIMISM=optimism_pinax
+reject P5b SCHEMA 'no Pinax endpoint' CHAINS=optimism SUBSTREAMS_SINK_DSN=$DSNV SINK_SCHEMA_OPTIMISM=optimism_pinax \
+  OPTIMISM_PINAX_ENDPOINT=base.substreams.pinax.network:443 SINK_ENDPOINT_OPTIMISM=base.substreams.pinax.network:443
+reject P6 ENDPOINT 'Pinax endpoint from chains.env' CHAINS=base SUBSTREAMS_SINK_DSN=$DSNV SINK_SCHEMA_BASE=base_pinax
+reject P6b ENDPOINT 'Pinax endpoint from chains.env' CHAINS=base SUBSTREAMS_SINK_DSN=$DSNV SINK_SCHEMA_BASE=base_pinax SINK_ENDPOINT_BASE=eth.substreams.pinax.network:443
+for c in P3 P4 P5 P5b P6 P6b; do
+  expect -eq 1 sink_config_invalid "$CASES/$c/out.log" "$c exactly one config error"
+done
+for order in base,tron tron,base; do
+  new_case "P7-${order%%,*}"
+  perl -e 'alarm 10; exec @ARGV' env CHAINS=$order SUBSTREAMS_SINK_DSN=$DSNV "${PINAX_BASE[@]}" "$SUP" >"$LOG" 2>/dev/null; code=$?
+  [ "$code" -eq 1 ] && pass "P7 $order mixed pool exit 1" || fail "P7 $order exit $code"
+  expect -eq 1 '"chain":null,"field":"SCHEMA","reason":"mixed _pinax and primary schemas in one pool"' "$LOG" "P7 $order mixed pool reason"
+  expect -eq 0 sink_started "$LOG" "P7 $order nothing started"
+  no_child "P7 $order"
+  if [ -f "$STUB_DIR/calls.log" ] && grep -q 'stub: info' "$STUB_DIR/calls.log"; then fail "P7 $order substreams info ran"; else pass "P7 $order no substreams call"; fi
+  all_json "$LOG" "P7 $order"
+done
+reject P8 SCHEMA 'legacy DSN' DSN=$DSNV SINK_SCHEMA_TRON=tron_pinax
+# P9/P10: the image before this contract (517db47, vendored byte for byte) refuses every chain of
+# a Pinax pool and exits 1, so a stale image can never write a primary schema for the Pinax pool.
+for c in P9 P10; do
+  new_case "$c"
+  make_app "$STUB_DIR/app"
+  cp "$ROOT/fixtures/supervisor-pre-pinax-517db47.sh" "$STUB_DIR/app/sinks/supervisor.sh"
+  if [ "$c" = P9 ]; then
+    p_env=(CHAINS=base "${PINAX_BASE[@]}"); n=1
+  else
+    p_env=("${PINAX_SIX[@]}"); n=6
+  fi
+  perl -e 'alarm 10; exec @ARGV' env SUBSTREAMS_SINK_DSN=$DSNV "${p_env[@]}" "$STUB_DIR/app/sinks/supervisor.sh" >"$LOG" 2>/dev/null; code=$?
+  pkill -f "$ROOT/bin/substreams" 2>/dev/null
+  [ "$code" -eq 1 ] && pass "$c old supervisor exit 1" || fail "$c exit $code"
+  expect -eq "$n" '"event":"sink_config_invalid","chain":"[a-z-]*","field":"SCHEMA".*does not match' "$LOG" "$c old supervisor rejects every Pinax schema"
+  [ "$c" = P9 ] && expect -eq 1 '"event":"sink_config_invalid","chain":"base","field":"SCHEMA".*does not match' "$LOG" "P9 base rejected"
+  expect -eq 1 'no chain has a valid configuration' "$LOG" "$c no valid chain"
+  expect -eq 0 sink_started "$LOG" "$c nothing started"
+  no_child "$c"
+  all_json "$LOG" "$c"
+done
+new_case P11
+perl -e 'alarm 10; exec @ARGV' env SUBSTREAMS_SINK_DSN=$DSNV "${PINAX_SIX[@]}" SINK_START_BLOCK_BSC=12x "$SUP" >"$LOG" 2>/dev/null; code=$?
+pkill -f "$ROOT/bin/substreams" 2>/dev/null
+[ "$code" -eq 1 ] && pass "P11 Pinax pool with one bad start block exit 1" || fail "P11 exit $code"
+expect -eq 1 '"event":"sink_config_invalid","chain":"bsc","field":"START_BLOCK"' "$LOG" "P11 bsc start block rejected"
+expect -eq 0 sink_started "$LOG" "P11 no chain started"
+no_child P11
+if [ -f "$STUB_DIR/calls.log" ] && grep -q 'stub: info' "$STUB_DIR/calls.log"; then fail "P11 substreams info ran"; else pass "P11 no substreams call"; fi
+all_json "$LOG" P11
+
+# P12/P13: a trailing newline on SINK_SCHEMA_BASE must never be stripped into a valid _pinax schema.
+for c in P12 P13; do
+  new_case "$c"
+  if [ "$c" = P12 ]; then order=base,tron; else order=base; fi
+  perl -e 'alarm 10; exec @ARGV' env CHAINS=$order SUBSTREAMS_SINK_DSN=$DSNV "${PINAX_BASE[@]}" SINK_SCHEMA_BASE=$'base_pinax\n' "$SUP" >"$LOG" 2>/dev/null; code=$?
+  pkill -f "$ROOT/bin/substreams" 2>/dev/null
+  [ "$code" -eq 1 ] && pass "$c newline schema exit 1" || fail "$c exit $code"
+  expect -eq 0 sink_started "$LOG" "$c nothing started"
+  no_child "$c"
+  if [ -f "$STUB_DIR/calls.log" ] && grep -q 'stub: info' "$STUB_DIR/calls.log"; then fail "$c substreams info ran"; else pass "$c no substreams call"; fi
+  all_json "$LOG" "$c"
+done
+
+# P14: one bad stop block in a Pinax pool stops the whole pool, like a bad start block.
+new_case P14
+perl -e 'alarm 10; exec @ARGV' env SUBSTREAMS_SINK_DSN=$DSNV "${PINAX_SIX[@]}" SINK_STOP_BLOCK_BSC=12x "$SUP" >"$LOG" 2>/dev/null; code=$?
+pkill -f "$ROOT/bin/substreams" 2>/dev/null
+[ "$code" -eq 1 ] && pass "P14 Pinax pool with one bad stop block exit 1" || fail "P14 exit $code"
+expect -eq 1 '"event":"sink_config_invalid","chain":"bsc","field":"STOP_BLOCK","message":"not a block number"' "$LOG" "P14 bsc stop block rejected"
+expect -eq 0 sink_started "$LOG" "P14 no chain started"
+no_child P14
+if [ -f "$STUB_DIR/calls.log" ] && grep -q 'stub: info' "$STUB_DIR/calls.log"; then fail "P14 substreams info ran"; else pass "P14 no substreams call"; fi
+all_json "$LOG" P14
+# P15: primary pool skips only the chain with the bad stop block.
+new_case P15
+run_sup 2 CHAINS=base,tron SUBSTREAMS_SINK_DSN=$DSNV SINK_STOP_BLOCK_TRON=12x SINK_PROGRESS_INTERVAL_SECONDS=1
+expect -eq 1 '"event":"sink_config_invalid","chain":"tron","field":"STOP_BLOCK"' "$LOG" "P15 tron stop block rejected"
+expect -eq 1 '"event":"sink_started","chain":"base"' "$LOG" "P15 base still starts"
+expect -eq 0 '"event":"sink_started","chain":"tron"' "$LOG" "P15 tron skipped"
+# P16: absolute and relative stop blocks are still accepted and passed to -t.
+new_case P16
+run_sup 2 CHAINS=base,tron SUBSTREAMS_SINK_DSN=$DSNV SINK_STOP_BLOCK_BASE=+100 SINK_STOP_BLOCK_TRON=500 SINK_PROGRESS_INTERVAL_SECONDS=1
+expect -eq 0 sink_config_invalid "$LOG" "P16 no config error"
+expect -eq 2 '"event":"sink_started"' "$LOG" "P16 both chains started"
+grep -q -- '-t +100' "$STUB_DIR/calls.log" && grep -q -- '-t 500' "$STUB_DIR/calls.log" && pass "P16 stop blocks passed to -t" || { fail "P16 -t args"; cat "$STUB_DIR/calls.log"; }
+
 echo; echo "FAILURES: $fails"
 exit "$fails"

@@ -11,3 +11,10 @@ CREATE SCHEMA IF NOT EXISTS matic;
 CREATE SCHEMA IF NOT EXISTS bsc;
 CREATE SCHEMA IF NOT EXISTS arbitrum_one;
 CREATE SCHEMA IF NOT EXISTS optimism;
+-- Pinax-pool schemas (one per Pinax-endpoint chain), so the pinax pool also works locally.
+CREATE SCHEMA IF NOT EXISTS mainnet_pinax;
+CREATE SCHEMA IF NOT EXISTS sepolia_pinax;
+CREATE SCHEMA IF NOT EXISTS base_pinax;
+CREATE SCHEMA IF NOT EXISTS matic_pinax;
+CREATE SCHEMA IF NOT EXISTS bsc_pinax;
+CREATE SCHEMA IF NOT EXISTS arbitrum_one_pinax;

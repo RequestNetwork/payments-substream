@@ -88,6 +88,8 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Lint supervisor, entrypoint and test scripts
+        # The vendored fixture sinks/tests/fixtures/supervisor-pre-pinax-517db47.sh is deliberately
+        # not linted: it was linted at 517db47 and must stay byte-identical.
         run: |
           shellcheck -x sinks/supervisor.sh sinks/tests/run-tests.sh sinks/tests/bin/substreams sinks/tests/bin/timeout
           shellcheck -s sh sinks/entrypoint.sh sinks/healthcheck.sh

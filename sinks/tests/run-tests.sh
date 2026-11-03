@@ -430,6 +430,25 @@ run_sup 2 CHAINS=base,tron SUBSTREAMS_SINK_DSN=$DSNV SINK_STOP_BLOCK_BASE=+100 S
 expect -eq 0 sink_config_invalid "$LOG" "P16 no config error"
 expect -eq 2 '"event":"sink_started"' "$LOG" "P16 both chains started"
 grep -q -- '-t +100' "$STUB_DIR/calls.log" && grep -q -- '-t 500' "$STUB_DIR/calls.log" && pass "P16 stop blocks passed to -t" || { fail "P16 -t args"; cat "$STUB_DIR/calls.log"; }
+# P17: a bad schema override is fatal even when another field (here an invalid endpoint) would
+# skip the chain first; the rest of the pool must never start, in either chain order.
+for order in base,tron tron,base; do
+  new_case "P17-${order%%,*}"
+  perl -e 'alarm 10; exec @ARGV' env CHAINS=$order SUBSTREAMS_SINK_DSN=$DSNV SINK_SCHEMA_BASE=mainnet \
+    SINK_ENDPOINT_BASE=https://base.substreams.pinax.network:443 "$SUP" >"$LOG" 2>/dev/null; code=$?
+  pkill -f "$ROOT/bin/substreams" 2>/dev/null
+  [ "$code" -eq 1 ] && pass "P17 $order exit 1" || fail "P17 $order exit $code"
+  expect -eq 1 sink_config_invalid "$LOG" "P17 $order exactly one config error"
+  expect -eq 1 '"event":"sink_config_invalid","chain":"base","field":"SCHEMA"' "$LOG" "P17 $order base SCHEMA rejected"
+  expect -eq 0 sink_started "$LOG" "P17 $order nothing started"
+  no_child "P17 $order"
+  all_json "$LOG" "P17 $order"
+done
+# P18: a _pinax schema with an invalid endpoint fails on ENDPOINT in pre-validation, before the
+# per-chain loop and before the mixed-pool check.
+reject P18 ENDPOINT 'Pinax endpoint from chains.env' CHAINS=base SUBSTREAMS_SINK_DSN=$DSNV \
+  SINK_SCHEMA_BASE=base_pinax SINK_ENDPOINT_BASE=https://base.substreams.pinax.network:443
+expect -eq 1 sink_config_invalid "$CASES/P18/out.log" "P18 exactly one config error"
 
 echo; echo "FAILURES: $fails"
 exit "$fails"

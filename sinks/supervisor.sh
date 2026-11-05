@@ -57,6 +57,11 @@ if [ ! -r "$CHAINS_ENV_FILE" ]; then
     message "chain defaults file is missing"
   exit 1
 fi
+# Which chains may run on Pinax is decided by chains.env alone: drop any <CHAIN>_PINAX_ENDPOINT
+# from the environment first, so a chain with no Pinax endpoint (optimism, tron) cannot get one.
+for name in $(compgen -v); do
+  case $name in *_PINAX_ENDPOINT) unset "$name" ;; esac
+done
 # shellcheck source-path=SCRIPTDIR source=chains.env
 . "$CHAINS_ENV_FILE"
 
@@ -173,6 +178,81 @@ module_hash() {
   printf '%s\n' "$out" | awk '/^Name: db_out$/ { found = 1 } found && /^Hash: / { print $2; exit }'
 }
 
+# is_pinax_schema <CHAIN_KEY> <schema>: true when <schema> is an accepted <default>_pinax override
+# for a chain with a <CHAIN>_PINAX_ENDPOINT. Pure: reads only the environment and chains.env.
+is_pinax_schema() {
+  local key=$1 schema=$2 override_var default_var pinax_var
+  override_var="SINK_SCHEMA_${key}" default_var="${key}_SCHEMA" pinax_var="${key}_PINAX_ENDPOINT"
+  [ "$legacy_dsn_only" = false ] && [ -n "${!override_var:-}" ] &&
+    [ "$schema" != "${!default_var:-}" ] && [ "$schema" = "${!default_var:-}_pinax" ] &&
+    [ -n "${!pinax_var:-}" ]
+}
+
+# A Pinax pool is one where any SINK_SCHEMA_<CHAIN> ends in _pinax. It writes only <schema>_pinax
+# schemas, never a primary one, and runs all of its chains or none: a pool mixing _pinax and
+# primary schemas is fatal here, before any substreams call.
+#
+# Schema ownership is checked here too, for every validly named chain, before the per-chain loop
+# can skip a chain for an unrelated field: a bad schema override is fatal, never a skipped chain.
+pinax_routed=false
+for chain in "${chains[@]}"; do
+  [[ $chain =~ ^[a-z0-9][a-z0-9-]*$ ]] || continue
+  key=$(printf '%s' "$chain" | tr '[:lower:]-' '[:upper:]_')
+  # Same helper and same value as the per-chain validation below. The trailing sentinel keeps
+  # command substitution from stripping newlines, so a value with whitespace is never normalised
+  # into a valid schema; it is fatal here (fail closed, before any substreams call).
+  pre_schema=$(resolve "$key" SCHEMA; printf x)
+  pre_schema=${pre_schema%x}
+  if [ -n "$pre_schema" ] && ! [[ $pre_schema =~ ^[a-z_][a-z0-9_]*$ ]]; then
+    log ERROR sink_config_invalid chain "$chain" field SCHEMA message "invalid schema name"
+    exit 1
+  fi
+  pre_endpoint=$(resolve "$key" ENDPOINT; printf x)
+  pre_endpoint=${pre_endpoint%x}
+  # A chain's schema is fixed by chains.env: an override may not point it at another chain's
+  # schema (two writers on one schema corrupt its cursor). The only other accepted value is
+  # <schema>_pinax, for a chain with a <CHAIN>_PINAX_ENDPOINT. The legacy DSN-only layout is
+  # `public`. A bad override is fatal: skipping the chain would leave the rest of the pool running.
+  schema_override_var="SINK_SCHEMA_${key}" schema_default_var="${key}_SCHEMA"
+  pinax_endpoint_var="${key}_PINAX_ENDPOINT"
+  schema_default=${!schema_default_var:-}
+  pinax_endpoint=${!pinax_endpoint_var:-}
+  if [ "$legacy_dsn_only" = false ] && [ -n "${!schema_override_var:-}" ] &&
+    [ "$pre_schema" != "$schema_default" ] && ! is_pinax_schema "$key" "$pre_schema"; then
+    if [ "$pre_schema" = "${schema_default}_pinax" ]; then
+      log ERROR sink_config_invalid chain "$chain" field SCHEMA \
+        message "schema override does not match this chain's schema in chains.env (this chain has no Pinax endpoint)"
+      exit 1
+    else
+      log ERROR sink_config_invalid chain "$chain" field SCHEMA \
+        message "schema override does not match this chain's schema in chains.env (only ${schema_default} or ${schema_default}_pinax is accepted)"
+      exit 1
+    fi
+  fi
+  if [ "$legacy_dsn_only" = true ] && [[ ${!schema_override_var:-} == *_pinax ]]; then
+    log ERROR sink_config_invalid chain "$chain" field SCHEMA \
+      message "schema override does not match this chain's schema in chains.env (the legacy DSN writes public only)"
+    exit 1
+  fi
+  if is_pinax_schema "$key" "$pre_schema" && [ "$pre_endpoint" != "$pinax_endpoint" ]; then
+    log ERROR sink_config_invalid chain "$chain" field ENDPOINT \
+      message "a _pinax schema requires this chain's Pinax endpoint from chains.env"
+    exit 1
+  fi
+  if [[ $pre_schema == *_pinax ]]; then pinax_routed=true; fi
+done
+if [ "$pinax_routed" = true ] && [ "$legacy_dsn_only" = false ]; then
+  for chain in "${chains[@]}"; do
+    [[ $chain =~ ^[a-z0-9][a-z0-9-]*$ ]] || continue
+    key=$(printf '%s' "$chain" | tr '[:lower:]-' '[:upper:]_')
+    if [[ $(resolve "$key" SCHEMA) != *_pinax ]]; then
+      log ERROR sink_config_invalid chain null field SCHEMA \
+        reason "mixed _pinax and primary schemas in one pool"
+      exit 1
+    fi
+  done
+fi
+
 chain_names=() chain_dsns=() chain_spkgs=() chain_endpoints=() chain_networks=()
 chain_schemas=() chain_tokens=() chain_starts=() chain_stops=() chain_extras=()
 chain_hashes=() chain_undo=()
@@ -202,7 +282,8 @@ for chain in "${chains[@]}"; do
   spkg="$SPKG_DIR/$spkg_name.spkg"
   endpoint=$(resolve "$key" ENDPOINT)
   network=$(resolve "$key" NETWORK)
-  schema=$(resolve "$key" SCHEMA)
+  schema=$(resolve "$key" SCHEMA; printf x)
+  schema=${schema%x}
   token_env=$(resolve "$key" TOKEN_ENV)
   if [ ! -r "$spkg" ]; then
     log ERROR sink_config_invalid chain "$chain" field SPKG message "package not found"
@@ -222,14 +303,15 @@ for chain in "${chains[@]}"; do
     log ERROR sink_config_invalid chain "$chain" field SCHEMA message "invalid schema name"
     continue
   fi
-  # A chain's schema is fixed by chains.env: an override may not point it at another chain's
-  # schema (two writers on one schema corrupt its cursor). The legacy DSN-only layout is `public`.
-  schema_override_var="SINK_SCHEMA_${key}" schema_default_var="${key}_SCHEMA"
-  if [ "$legacy_dsn_only" = false ] && [ -n "${!schema_override_var:-}" ] &&
-    [ "$schema" != "${!schema_default_var:-}" ]; then
-    log ERROR sink_config_invalid chain "$chain" field SCHEMA \
-      message "schema override does not match this chain's schema in chains.env"
-    continue
+  # Schema ownership (and a _pinax schema's endpoint) was checked, fatally, before this loop. The
+  # endpoint guard below repeats that check by the same pure logic; it cannot fire on its own.
+  pinax_endpoint_var="${key}_PINAX_ENDPOINT"
+  chain_is_pinax=false
+  if is_pinax_schema "$key" "$schema"; then chain_is_pinax=true; fi
+  if [ "$chain_is_pinax" = true ] && [ "$endpoint" != "${!pinax_endpoint_var:-}" ]; then
+    log ERROR sink_config_invalid chain "$chain" field ENDPOINT \
+      message "a _pinax schema requires this chain's Pinax endpoint from chains.env"
+    exit 1
   fi
   # The named variable is sent to the endpoint as a bearer token: only the two Substreams token
   # secrets may be named, never the DSN or any other variable.
@@ -293,16 +375,28 @@ for chain in "${chains[@]}"; do
     log ERROR sink_config_invalid chain "$chain" field UNDO_BUFFER_SIZE message "not a non-negative integer"
     continue
   fi
-  hash=$(module_hash "$spkg" "$network")
-  if [ -z "$hash" ]; then
-    log ERROR sink_config_invalid chain "$chain" field NETWORK \
-      message "substreams info could not resolve the db_out module hash for this network"
+  start_var="SINK_START_BLOCK_${key}"
+  stop_var="SINK_STOP_BLOCK_${key}"
+  if [ -n "${!start_var:-}" ] && ! [[ ${!start_var} =~ ^-?[0-9]+$ ]]; then
+    log ERROR sink_config_invalid chain "$chain" field START_BLOCK message "not an integer"
     continue
+  fi
+  if [ -n "${!stop_var:-}" ] && ! [[ ${!stop_var} =~ ^\+?[0-9]+$ ]]; then
+    log ERROR sink_config_invalid chain "$chain" field STOP_BLOCK message "not a block number"
+    continue
+  fi
+  # A Pinax pool calls substreams only once every chain has passed validation (after the loop).
+  hash=''
+  if [ "$pinax_routed" = false ]; then
+    hash=$(module_hash "$spkg" "$network")
+    if [ -z "$hash" ]; then
+      log ERROR sink_config_invalid chain "$chain" field NETWORK \
+        message "substreams info could not resolve the db_out module hash for this network"
+      continue
+    fi
   fi
 
   if [[ $base_dsn == *\?* ]]; then sep='&'; else sep='?'; fi
-  start_var="SINK_START_BLOCK_${key}"
-  stop_var="SINK_STOP_BLOCK_${key}"
 
   chain_names+=("$chain")
   chain_dsns+=("${base_dsn}${sep}schemaName=${schema}")
@@ -318,6 +412,12 @@ for chain in "${chains[@]}"; do
   chain_undo+=("$undo")
 done
 
+# A Pinax pool never runs a subset of its chains: any chain skipped above (its error is logged)
+# stops the whole pool, before any substreams call.
+if [ "$pinax_routed" = true ] && [ "${#chain_names[@]}" -ne "${#chains[@]}" ]; then
+  exit 1
+fi
+
 # Two chains resolving to one schema would be two writers on one cursor: refuse to start either.
 for i in "${!chain_schemas[@]}"; do
   for j in "${!chain_schemas[@]}"; do
@@ -331,6 +431,17 @@ done
 if [ "${#chain_names[@]}" -eq 0 ]; then
   log ERROR sink_config_invalid chain null field CHAINS message "no chain has a valid configuration"
   exit 1
+fi
+
+if [ "$pinax_routed" = true ]; then
+  for i in "${!chain_names[@]}"; do
+    chain_hashes[i]=$(module_hash "${chain_spkgs[$i]}" "${chain_networks[$i]}")
+    if [ -z "${chain_hashes[$i]}" ]; then
+      log ERROR sink_config_invalid chain "${chain_names[$i]}" field NETWORK \
+        message "substreams info could not resolve the db_out module hash for this network"
+      exit 1
+    fi
+  done
 fi
 
 # --- Children ---------------------------------------------------------------------------------

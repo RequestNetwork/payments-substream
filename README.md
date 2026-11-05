@@ -250,6 +250,10 @@ allow-listed: only the flush/batch flags and `--final-blocks-only`). Overrides a
 manifest, the endpoint is a `streamingfast.io` or `pinax.network` host on port 443, the token variable is
 `SUBSTREAMS_API_TOKEN` or `SUBSTREAMS_API_TOKEN_ALT`, the package is `tron` or `evm`); see
 `docs/contract.md` "Supervisor behaviour" for the rules.
+A `SINK_SCHEMA_<CHAIN>` of `<schema>_pinax` is accepted only for the six chains with a Pinax
+endpoint (mainnet, sepolia, base, matic, bsc, arbitrum_one) and only when
+`SINK_ENDPOINT_<CHAIN>` equals that chain's `<CHAIN>_PINAX_ENDPOINT` key from `sinks/chains.env`;
+any other combination is fatal.
 The legacy `SUBSTREAMS_ENDPOINTS_CONFIG_TRON` is still honoured for `tron`. Each field resolves
 `SINK_<FIELD>_<CHAIN>` -> `<CHAIN>_<FIELD>` in `sinks/chains.env` -> error (the chain is skipped
 with `sink_config_invalid`). There is no default start block: without a cursor a chain starts at
@@ -257,13 +261,13 @@ its manifest `initialBlock`, otherwise it resumes from the cursor.
 
 The supervisor logs one JSON object per stdout line, field `event`: `supervisor_started`,
 `sink_started`, `sink_exited`, `sink_finished`, `sink_setup_failed`, `sink_config_invalid`,
-`sink_progress`, `sink_progress_advanced`, `sink_stalled`. request-infrastructure's alerts are
+`sink_progress`, `sink_progress_advanced`, `sink_stalled`, `supervisor_idle`. request-infrastructure's alerts are
 built on these names; do not rename them. It never logs the DSN, tokens or the environment.
 
 ## Deployment
 
 The sink runs as a GCP Cloud Run **worker pool** (one live pool per environment, plus an optional
-replay pool). The Easypanel VM sink (`docker-compose.prod.yml`) is frozen and retired at the
+replay pool and an optional Pinax pool). The Easypanel VM sink (`docker-compose.prod.yml`) is frozen and retired at the
 REQ-390 cutover: its deploy workflows no longer run on push/release and refuse to run unless
 `confirm_vm_redeploy=I_UNDERSTAND`. Follow `docs/cutover.md` for the VM -> GCP cutover.
 
@@ -278,13 +282,18 @@ REQ-390 cutover: its deploy workflows no longer run on push/release and refuse t
 Run it manually (workflow_dispatch) with:
 
 - `environment`: `stage` or `production`
-- `pool`: `live` (`payments-substream-<env>`) or `replay` (`payments-substream-replay-<env>`)
+- `pool`: `live` (`payments-substream-<env>`), `replay` (`payments-substream-replay-<env>`) or
+  `pinax` (`payments-substream-pinax-<env>`)
 - `image_tag`: the GHCR tag to deploy (a full commit sha, `main`, or a release tag)
 
 It authenticates with Workload Identity Federation, copies the image from GHCR to
 `us-central1-docker.pkg.dev/<project>/request-docker/payments-substream:<tag>`, and runs
 `gcloud run worker-pools update ... --image=...`. It needs the repository secrets
 `GCP_WIF_PROVIDER`, `GCP_SA_EMAIL` and `GCP_PROJECT_ID`.
+
+The `pinax` pool (`payments-substream-pinax-<env>`) runs the Pinax-endpoint chains into the
+`<schema>_pinax` schemas. A deployable Pinax image must contain both the supervisor change that
+adds the `<schema>_pinax` rule and PR #8 (`inbox_seq`), which request-api's ingest reads.
 
 ### 3. Terraform owns the pool
 
@@ -441,6 +450,17 @@ means a chain's cursor has not advanced for `SINK_STALL_SECONDS`. Check that cha
 | TRON Mainnet | `mainnet.tron.streamingfast.io:443` |
 | TRON Shasta (Testnet) | `shasta.tron.streamingfast.io:443` |
 | Ethereum Mainnet | `mainnet.eth.streamingfast.io:443` |
+
+Pinax (`pinax.network`) endpoints, used by the `<schema>_pinax` pool:
+
+| Network | Endpoint |
+|---------|----------|
+| Ethereum Mainnet | `eth.substreams.pinax.network:443` |
+| Sepolia | `sepolia.substreams.pinax.network:443` |
+| Base | `base.substreams.pinax.network:443` |
+| Polygon (matic) | `polygon.substreams.pinax.network:443` |
+| BNB Chain (bsc) | `bsc.substreams.pinax.network:443` |
+| Arbitrum One | `arbone.substreams.pinax.network:443` |
 
 ## License
 

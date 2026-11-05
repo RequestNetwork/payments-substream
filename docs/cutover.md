@@ -360,8 +360,9 @@ stream until the VM sink stops (step 6) -- until then, run EVM chains with
 
 After `sink_finished`, add the chain to `payments_substream_chains` and shadow it, same as TRON
 step 5. The replay pool must be disabled before the live pool lists that chain
-(request-infrastructure's invariant: a chain is listed in exactly one pool at a time; its plan
-fails if both pools list the same chain).
+(the invariant is one writer per physical schema: a chain may be in the live pool and the Pinax
+pool because their schemas differ, but live and replay still never share a chain; request-infrastructure's
+plan fails if both pools list the same chain).
 
 ## 9. Rotation
 

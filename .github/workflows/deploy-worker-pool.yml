@@ -29,12 +29,13 @@ on:
           - stage
           - production
       pool:
-        description: 'Worker pool: live (payments-substream-<env>) or replay (payments-substream-replay-<env>)'
+        description: 'Worker pool: live (payments-substream-<env>), replay (payments-substream-replay-<env>) or pinax (payments-substream-pinax-<env>)'
         required: true
         type: choice
         options:
           - live
           - replay
+          - pinax
       image_tag:
         description: 'GHCR image tag to deploy (full commit sha, main, or a release tag)'
         required: true
@@ -77,11 +78,15 @@ jobs:
             echo "::error::image_tag is not a valid image tag"
             exit 1
           fi
-          if [ "$POOL" = replay ]; then
-            pool_name="payments-substream-replay-$ENVIRONMENT"
-          else
-            pool_name="payments-substream-$ENVIRONMENT"
-          fi
+          case "$POOL" in
+            live) pool_name="payments-substream-$ENVIRONMENT" ;;
+            replay) pool_name="payments-substream-replay-$ENVIRONMENT" ;;
+            pinax) pool_name="payments-substream-pinax-$ENVIRONMENT" ;;
+            *)
+              echo "::error::unknown pool"
+              exit 1
+              ;;
+          esac
           {
             echo "pool_name=$pool_name"
             echo "source_image=$SOURCE_IMAGE:$IMAGE_TAG"
